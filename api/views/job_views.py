@@ -1,4 +1,3 @@
-
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
@@ -6,7 +5,6 @@ from django.shortcuts import get_object_or_404
 from ..models import Job
 from api.services.job_service import process_job_submission, get_job_status_data
 from api.utils.http_utils import extract_csv_file_with_validation
-
 
 @csrf_exempt
 def submit_job(request):

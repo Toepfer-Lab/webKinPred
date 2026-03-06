@@ -1,7 +1,9 @@
 # models.py
 from django.db import models
 from django.utils import timezone
-import string, random
+import secrets
+import string
+import random
 
 
 def generate_public_id(length=7):
@@ -82,3 +84,66 @@ class Job(models.Model):
                     self.public_id = pid
                     break
         super().save(*args, **kwargs)
+
+
+def generate_api_key():
+    """Generate a cryptographically secure API key with an 'ak_' prefix."""
+    return "ak_" + secrets.token_hex(32)  # 67 chars total, 256 bits of entropy
+
+
+class ApiKey(models.Model):
+    """
+    A long-lived API key that grants programmatic access to the prediction API.
+
+    Keys are tied to an ApiUser (identified by IP address) so that the existing
+    IP-based quota and blocking system applies automatically. A single user can
+    hold multiple keys — one per project or script, for example.
+
+    The full key is only returned once at creation time (via the management
+    command). Afterwards, only the first 10 characters are surfaced in the admin
+    so that accidental exposure is minimised.
+    """
+
+    key = models.CharField(
+        max_length=67,
+        unique=True,
+        default=generate_api_key,
+        db_index=True,
+        help_text="The secret token sent in the Authorization: Bearer header.",
+    )
+    user = models.OneToOneField(
+        ApiUser,
+        on_delete=models.CASCADE,
+        related_name="api_key",
+        help_text="The API user (IP address) this key belongs to.",
+    )
+    label = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="A human-readable name for this key, e.g. 'Lab Python Script'.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Revoke a key by setting this to False.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp of the most recent authenticated request.",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "API Key"
+        verbose_name_plural = "API Keys"
+
+    def __str__(self):
+        status = "active" if self.is_active else "revoked"
+        label = self.label or "Unnamed"
+        return f"{label} ({self.key[:10]}…) [{status}]"
+
+    @property
+    def key_prefix(self):
+        """Returns only the first 10 characters for safe display in the admin."""
+        return self.key[:10] + "…"

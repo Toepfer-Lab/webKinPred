@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
-from .models import Job, ApiUser
+from .models import ApiKey, ApiUser, Job
 from api.utils.quotas import get_quota_usage
 from db_models.seqmap_models import Sequence
 
@@ -176,6 +176,67 @@ class JobAdmin(admin.ModelAdmin):
         return format_html(" | ".join(links))
 
     download_links.short_description = "Downloads"
+
+
+@admin.register(ApiKey)
+class ApiKeyAdmin(admin.ModelAdmin):
+    """
+    Admin interface for API keys.
+
+    The full key is never displayed here — only the first 10 characters are
+    shown so that accidental screen-sharing cannot leak credentials.  The full
+    key is printed exactly once when it is created via the management command
+    ``python manage.py create_api_key``.
+    """
+
+    list_display = [
+        "key_prefix",
+        "label",
+        "user_ip",
+        "is_active",
+        "created_at",
+        "last_used",
+    ]
+    list_filter = ["is_active", "created_at"]
+    search_fields = ["label", "user__ip_address"]
+    readonly_fields = ["key_prefix", "created_at", "last_used"]
+    ordering = ["-created_at"]
+
+    fieldsets = (
+        (
+            "Key Details",
+            {
+                "fields": ("key_prefix", "label", "is_active"),
+                "description": (
+                    "The full key is shown only once at creation time "
+                    "(via the create_api_key management command). "
+                    "To revoke a key, set 'Active' to false."
+                ),
+            },
+        ),
+        ("Ownership", {"fields": ("user",)}),
+        ("Timestamps", {"fields": ("created_at", "last_used")}),
+    )
+
+    actions = ["revoke_keys", "activate_keys"]
+
+    def user_ip(self, obj):
+        user_url = reverse("admin:api_apiuser_change", args=[obj.user.pk])
+        return format_html('<a href="{}">{}</a>', user_url, obj.user.ip_address)
+
+    user_ip.short_description = "User IP"
+
+    def revoke_keys(self, request, queryset):
+        count = queryset.update(is_active=False)
+        self.message_user(request, f"{count} API key(s) revoked.")
+
+    revoke_keys.short_description = "Revoke selected API keys"
+
+    def activate_keys(self, request, queryset):
+        count = queryset.update(is_active=True)
+        self.message_user(request, f"{count} API key(s) re-activated.")
+
+    activate_keys.short_description = "Re-activate selected API keys"
 
 
 @admin.register(Sequence)

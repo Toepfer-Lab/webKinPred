@@ -9,6 +9,12 @@ from django.views.static import serve
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+
+    # Public REST API (v1) — Bearer-token authenticated, no CSRF required.
+    # Must be listed before 'api/' so the more-specific prefix matches first.
+    path('api/v1/', include('api.urls_v1')),
+
+    # Web UI API — used by the React frontend, CSRF-protected.
     path('api/', include('api.urls')),
 ]
 

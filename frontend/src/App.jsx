@@ -4,11 +4,11 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import JobSubmissionForm from './components/job-submission/JobSubmissionForm';
 import JobStatus from './components/JobStatus';
 import About from './components/About';
-import Evaluation from './components/Evaluation';
+import ApiDocs from './components/ApiDocs/ApiDocs';
 import Header from './components/Header';
 import ProteinBackground from './components/ProteinBackground';
 import Footer from './components/Footer';
-import './styles/App.css'; 
+import './styles/App.css';
 
 function App() {
   return (
@@ -22,6 +22,7 @@ function App() {
             <Route path="/track-job/:public_id" element={<JobStatus />} />
             <Route path="/track-job" element={<JobStatus />} />
             <Route path="/about" element={<About />} />
+            <Route path="/api-docs" element={<ApiDocs />} />
             {/* <Route path="/evaluation" element={<Evaluation />} /> */}
           </Routes>
         </main>
