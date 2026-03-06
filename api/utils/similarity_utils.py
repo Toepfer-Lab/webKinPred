@@ -15,6 +15,20 @@ except ImportError:
     from webKinPred.config_local import CONDA_PATH, TARGET_DBS
 
 TMP_DIR = os.environ.get("MMSEQS_TMP_DIR", "/tmp")
+
+
+def _mmseqs_cmd(*args: str) -> list:
+    """
+    Build an mmseqs2 command list.
+
+    When CONDA_PATH is set the command is wrapped:
+        <conda> run -n mmseqs2_env mmseqs <args…>
+    When CONDA_PATH is None mmseqs is expected to be on PATH directly:
+        mmseqs <args…>
+    """
+    if CONDA_PATH:
+        return [CONDA_PATH, "run", "-n", "mmseqs2_env", "mmseqs", *args]
+    return ["mmseqs", *args]
 os.makedirs(TMP_DIR, exist_ok=True)
 
 
@@ -94,16 +108,8 @@ def create_mmseqs_database(fasta_file_path: str, session_id: str) -> Tuple[str, 
     temp_query_dir = tempfile.mkdtemp(dir=TMP_DIR)
     query_db = os.path.join(temp_query_dir, "queryDB")
     
-    run_and_stream([
-        CONDA_PATH,
-        "run",
-        "-n",
-        "mmseqs2_env",
-        "mmseqs",
-        "createdb",
-        fasta_file_path,
-        query_db,
-    ], session_id=session_id)
+    run_and_stream(_mmseqs_cmd("createdb", fasta_file_path, query_db),
+                   session_id=session_id)
     
     return query_db, temp_query_dir
 
@@ -129,42 +135,16 @@ def run_mmseqs_search(query_db: str, target_db: str, method_name: str, session_i
     
     try:
         push_line(session_id, f"--> [{method_name}] Running search")
-        run_and_stream([
-            CONDA_PATH,
-            "run",
-            "-n",
-            "mmseqs2_env",
-            "mmseqs",
-            "search",
-            query_db,
-            target_db,
-            result_db,
-            tmp_dir,
-            "--max-seqs",
-            "1000",
-            "-s",
-            "7.5",
-            "-e",
-            "0.001",
-            "-v",
-            "0",
-        ], session_id=session_id, fail_ok=True)
-        
+        run_and_stream(_mmseqs_cmd(
+            "search", query_db, target_db, result_db, tmp_dir,
+            "--max-seqs", "1000", "-s", "7.5", "-e", "0.001", "-v", "0",
+        ), session_id=session_id, fail_ok=True)
+
         push_line(session_id, f"--> [{method_name}] Converting alignments")
-        run_and_stream([
-            CONDA_PATH,
-            "run",
-            "-n",
-            "mmseqs2_env",
-            "mmseqs",
-            "convertalis",
-            query_db,
-            target_db,
-            result_db,
-            result_file,
-            "--format-output",
-            "query,target,pident",
-        ], session_id=session_id, fail_ok=True)
+        run_and_stream(_mmseqs_cmd(
+            "convertalis", query_db, target_db, result_db, result_file,
+            "--format-output", "query,target,pident",
+        ), session_id=session_id, fail_ok=True)
         
         return result_file
     except Exception:

@@ -19,7 +19,15 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         libgomp1 \
+        wget \
     && rm -rf /var/lib/apt/lists/*
+
+# ── MMseqs2 static binary (needed by /validate/?runSimilarity=true) ───────────
+RUN wget -q https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz -O /tmp/mmseqs.tar.gz \
+    && tar -xzf /tmp/mmseqs.tar.gz -C /tmp \
+    && mv /tmp/mmseqs/bin/mmseqs /usr/local/bin/mmseqs \
+    && chmod +x /usr/local/bin/mmseqs \
+    && rm -rf /tmp/mmseqs /tmp/mmseqs.tar.gz
 
 # ── Python dependencies (cached until requirements.txt changes) ───────────────
 COPY requirements.txt ./

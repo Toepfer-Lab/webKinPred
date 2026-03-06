@@ -46,7 +46,9 @@ TARGET_DBS = {
 }
 
 # Other config variables
-CONDA_PATH = "/opt/conda/bin/conda"
+# Set to None if mmseqs2 is installed directly on PATH (e.g. in Dockerfile.web).
+# Set to "/opt/conda/bin/conda" if running inside the full worker image.
+CONDA_PATH = None
 MODEL_LIMITS = {"EITLEM": 1024, "TurNup": 1024, "UniKP": 1000, "DLKcat": float("inf"), "KinForm-H": 1500, "KinForm-L": 1500}
 SERVER_LIMIT = 10000
 DEBUG = True
