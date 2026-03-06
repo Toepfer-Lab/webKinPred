@@ -13,14 +13,18 @@ function Footer() {
           {/* Column 1: App Name and Copyright */}
           <div className="col-lg-4 col-md-12 mb-3 mb-lg-0">
             <p className="footer-brand mb-0">KineticXPredictor</p>
-            <p className="copyright-text mb-0">2025 University of Galway</p>
+            <p className="copyright-text mb-0">2026 OpenKinetics</p>
           </div>
 
           {/* Column 2: Funding Information and Logos */}
           <div className="col-lg-8 col-md-12">
             <div className="d-flex justify-content-center justify-content-lg-end align-items-center">
               <p className="funding-text me-4 mb-0">
-                Co-funded by the European Union's Horizon Europe Framework Programme (101080997)
+                EU Horizon Europe (#101080997)
+                &ensp;·&ensp;
+                Swiss SERI (#23.00232)
+                &ensp;·&ensp;
+                UKRI (#10083717 &amp; #10080153)
               </p>
               <div className="footer-logos">
                 <a href="https://www.recon4imd.org/" target="_blank" rel="noopener noreferrer">

@@ -12,8 +12,9 @@ function Header() {
         <Navbar.Toggle aria-controls="basic-navbar-nav" />
         <Navbar.Collapse id="basic-navbar-nav">
           <Nav className="ml-auto">
-          <Nav.Link as={Link} to="/track-job">Track Job</Nav.Link>
-          <Nav.Link as={Link} to="/about">About</Nav.Link>
+            <Nav.Link as={Link} to="/track-job">Track Job</Nav.Link>
+            <Nav.Link as={Link} to="/api-docs">API</Nav.Link>
+            <Nav.Link as={Link} to="/about">About</Nav.Link>
           </Nav>
         </Navbar.Collapse>
       </Container>

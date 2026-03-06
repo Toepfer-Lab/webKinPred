@@ -1,6 +1,7 @@
 // src/components/About.js
 import React, { useState } from 'react';
 import { Button, Form } from 'react-bootstrap';
+import './ApiDocs/ApiDocs.css';
 
 const About = () => {
   const [copied, setCopied] = useState(false);
@@ -16,7 +17,8 @@ const About = () => {
   };
 
   return (
-    <div className="container mt-4">
+    <div className="api-docs-page">
+    <div className="container pt-4" style={{ color: '#e8e6f0' }}>
       <h2>About KineticXPredictor</h2>
       <section>
         <p>
@@ -32,6 +34,7 @@ const About = () => {
           {copied ? "Copied!" : "Copy Citation"}
         </Button>
       </section>
+    </div>
     </div>
   );
 };
