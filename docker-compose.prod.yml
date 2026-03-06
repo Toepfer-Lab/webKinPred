@@ -61,20 +61,11 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    command: >
+    command: >-
       sh -c "python manage.py migrate &&
              python manage.py migrate --database=seqmap &&
              python manage.py collectstatic --noinput --clear &&
-             gunicorn webKinPred.wsgi:application
-               --bind 0.0.0.0:8000
-               --workers 1
-               --worker-class gthread
-               --threads 2
-               --timeout 300
-               --graceful-timeout 30
-               --access-logfile -
-               --error-logfile -
-               --capture-output"
+             gunicorn webKinPred.wsgi:application --bind 0.0.0.0:8000 --workers 2 --worker-class sync --timeout 300 --graceful-timeout 30 --access-logfile - --error-logfile - --capture-output"
 
   # ── Frontend (nginx + React SPA) ────────────────────────────────────────────
   frontend:
