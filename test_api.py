@@ -477,7 +477,8 @@ def test_result_completed(base: str, headers: dict, job: dict | None,
         # Re-check final status
         r = requests.get(f"{base}/status/{job_id}/", headers=headers)
         if r.status_code == 200 and r.json().get("status") == "Failed":
-            print(f"         (skipped — job {job_id} ended in Failed state)")
+            check("job completed successfully (not Failed)", False,
+                  f"job {job_id} ended in Failed state")
             return
         if r.status_code != 200 or r.json().get("status") != "Completed":
             print(f"         (skipped — job {job_id} not yet completed; "
