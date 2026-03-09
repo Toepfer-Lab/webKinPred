@@ -101,22 +101,27 @@ def get_prot_t5_embeddings(
 
     # Set up paths based on setting and layer
     paths = {}
-    
-    # Set up paths for each requested setting
-    if "residue" in settings or all_layers:
-        raise NotImplementedError("Residue embeddings extraction not implemented in this snippet.")
-    
-    if "mean" in settings:
-        if layer is None:
-            paths["mean"] = precomputed_root / "prot_t5_last/mean_vecs"
-        else:
-            paths["mean"] = precomputed_root / f"prot_t5_layer_{layer}/mean_vecs"
 
-    if "weighted" in settings:
-        if layer is None:
-            paths["weighted"] = precomputed_root / "prot_t5_last/weighted_vecs"
-        else:
-            paths["weighted"] = precomputed_root / f"prot_t5_layer_{layer}/weighted_vecs"
+    if all_layers:
+        paths["all_layers"] = precomputed_root / "prot_t5_all_layers"
+    else:
+        if "residue" in settings:
+            if layer is None:
+                paths["residue"] = precomputed_root / "prot_t5_last/residue_vecs"
+            else:
+                paths["residue"] = precomputed_root / f"prot_t5_layer_{layer}/residue_vecs"
+
+        if "mean" in settings:
+            if layer is None:
+                paths["mean"] = precomputed_root / "prot_t5_last/mean_vecs"
+            else:
+                paths["mean"] = precomputed_root / f"prot_t5_layer_{layer}/mean_vecs"
+
+        if "weighted" in settings:
+            if layer is None:
+                paths["weighted"] = precomputed_root / "prot_t5_last/weighted_vecs"
+            else:
+                paths["weighted"] = precomputed_root / f"prot_t5_layer_{layer}/weighted_vecs"
 
     for p in paths.values():
         p.mkdir(parents=True, exist_ok=True)
@@ -143,7 +148,7 @@ def get_prot_t5_embeddings(
     # --------------------------- model load ------------------------------- #
     print("Loading ProtT5-XL UniRef50 ...")
     tokenizer = T5Tokenizer.from_pretrained(PROTT5XL_MODEL_PATH, do_lower_case=False)
-    model = T5EncoderModel.from_pretrained(PROTT5XL_MODEL_PATH, torch_dtype=torch.float32, low_cpu_mem_usage=True, output_hidden_states=True)
+    model = T5EncoderModel.from_pretrained(PROTT5XL_MODEL_PATH, torch_dtype=torch.float16, low_cpu_mem_usage=True, output_hidden_states=True)
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -180,7 +185,7 @@ def get_prot_t5_embeddings(
             if all_layers:
                 layer_means: List[np.ndarray] = []
                 for hs in hidden_states[1:]:  # skip embedding layer
-                    vec = hs[idx, :L].mean(dim=0).cpu().numpy()
+                    vec = hs[idx, :L].mean(dim=0).float().cpu().numpy()
                     layer_means.append(vec)
                 stack = np.stack(layer_means)             # [24, hidden]
                 np.save(paths["all_layers"] / f"{key}.npy", stack)
@@ -192,7 +197,7 @@ def get_prot_t5_embeddings(
                 else:
                     layer_tensor = hidden_states[layer + 1]    # skip embed layer
                 
-                residue_emb = layer_tensor[idx, :L].cpu().numpy()  # [L, H]
+                residue_emb = layer_tensor[idx, :L].float().cpu().numpy()  # [L, H]
                 
                 # Save residue embeddings if requested
                 if "residue" in settings:

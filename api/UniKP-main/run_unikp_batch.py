@@ -92,7 +92,7 @@ def load_t5_model():
             PROTT5XL_MODEL_PATH, do_lower_case=False
         )
         model = T5EncoderModel.from_pretrained(
-            PROTT5XL_MODEL_PATH, low_cpu_mem_usage=True, torch_dtype=torch.float32
+            PROTT5XL_MODEL_PATH, low_cpu_mem_usage=True, torch_dtype=torch.float16
         )
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         model = model.eval()
@@ -157,7 +157,7 @@ def seq_to_vec(sequences, tokenizer=None, model=None, device=None):
                 embedding = model(
                     input_ids=input_ids, attention_mask=attention_mask
                 ).last_hidden_state
-            embedding = embedding.cpu().numpy()[0]
+            embedding = embedding.float().cpu().numpy()[0]
             seq_len = (attention_mask[0] == 1).sum()
             seq_vec = embedding[: seq_len - 1].mean(axis=0)
             np.save(os.path.join(SEQ_VEC_DIR, f"{sid}.npy"), seq_vec)
