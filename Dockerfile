@@ -105,9 +105,9 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip \
     mamba create -n unikp python=3.7.12 -c conda-forge -y \
     && conda run -n unikp pip install -r docker-requirements/unikp_requirements.txt \
+    && conda run -n unikp pip install accelerate \
     && conda clean -afy
 
-# ── Embedding envs (inline deps — rarely change) ──────────────────────────────
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip \
     mamba create -n pseq2sites python=3.7.12 -c conda-forge -y \
