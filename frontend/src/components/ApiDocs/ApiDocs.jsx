@@ -335,11 +335,6 @@ export default function ApiDocs() {
         {/* ── Hero ────────────────────────────────────────────────────────── */}
         <header className="api-docs-hero">
           <h1>Developer API</h1>
-          <p className="lead">
-            Submit enzyme kinetics prediction jobs, track their progress, and download
-            results — all without the web interface. Any language that can make HTTP
-            requests works.
-          </p>
           <div className="api-base-url">
             <span className="api-base-url-label">BASE URL</span>
             <span>{BASE}</span>
@@ -372,7 +367,7 @@ export default function ApiDocs() {
               <div className="step-text">
                 <strong>Poll for status</strong>
                 <span>
-                  Check <code>/status/&#123;jobId&#125;/</code> every few seconds until
+                  Check <code>/status/&#123;jobId&#125;/</code> until
                   the job is <strong>Completed</strong> (or <strong>Failed</strong>).
                 </span>
               </div>
@@ -382,8 +377,8 @@ export default function ApiDocs() {
               <div className="step-text">
                 <strong>Download results</strong>
                 <span>
-                  Fetch <code>/result/&#123;jobId&#125;/</code> for a CSV file, or add{' '}
-                  <code>?format=json</code> to receive structured JSON.
+                  Fetch <code>/result/&#123;jobId&#125;/</code> for a CSV file (add{' '}
+                  <code>?format=json</code> to receive structured JSON).
                 </span>
               </div>
             </div>
@@ -402,12 +397,6 @@ export default function ApiDocs() {
           </div>
 
           <ApiKeyManager />
-
-          <div className="api-callout api-callout-warning">
-            <strong>Keep your API key secret.</strong> Do not commit it to source control.
-            Use environment variables or a secrets manager in production scripts.
-            If your key is compromised, revoke it above and generate a new one.
-          </div>
         </section>
 
         {/* ── Endpoints ───────────────────────────────────────────────────── */}
