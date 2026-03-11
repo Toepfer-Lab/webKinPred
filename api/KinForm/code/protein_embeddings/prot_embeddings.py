@@ -303,21 +303,164 @@ def get_embeddings(seq_dict, batch_size=2, model=None, id_to_seq=None, setting='
             raise ValueError(f"Invalid model: {model}. Accepted models: {accepted_models}")
 
 
+def get_embeddings_multi_layer(
+    seq_dict, layers, batch_size=2, model=None, id_to_seq=None,
+    setting='mean', only_save=False,
+    weights_df=None, weights_key_col="PDB", weights_col="Pred_BS_Scores"
+):
+    """Load *model* once and extract embeddings for all *layers* in one pass.
+
+    For ESM2:  a single forward call with repr_layers=layers extracts all layers.
+    For ESM-C: a single logits() call returns all hidden_states; we index per layer.
+    """
+    from collections import defaultdict
+
+    settings = set(s.strip() for s in setting.split("+"))
+    valid_settings = {"mean", "residue", "weighted"}
+    assert settings.issubset(valid_settings), f"Invalid setting: {setting}"
+    accepted_models = ['esm2', 'esmc']
+    assert model in accepted_models, f"get_embeddings_multi_layer supports {accepted_models}"
+    if "weighted" in settings:
+        assert weights_df is not None, "--weights_file is required when setting includes 'weighted'"
+    assert all(key in id_to_seq and id_to_seq[key] == value for key, value in seq_dict.items())
+
+    precomputed_root = Path(os.environ.get("KINFORM_MEDIA_PATH")) / "sequence_info"
+
+    # Build output directories for each (layer, setting) combination
+    layer_paths = {}
+    for layer in layers:
+        prefix = f"{model}_last" if layer is None else f"{model}_layer_{layer}"
+        paths = {}
+        for s in settings:
+            d = precomputed_root / prefix / f"{s}_vecs"
+            d.mkdir(parents=True, exist_ok=True)
+            paths[s] = d
+        layer_paths[layer] = paths
+
+    # Determine which keys still need at least one (layer, setting) computed
+    key_to_exist = {
+        key: all(
+            all((layer_paths[layer][s] / f"{key}.npy").exists() for s in settings)
+            for layer in layers
+        )
+        for key in seq_dict
+    }
+
+    if all(key_to_exist.values()):
+        print(f"Skipping {model} model loading, all embeddings already exist")
+        if only_save:
+            return None
+        # Return nested dict: key -> layer -> {setting -> array}
+        result = {}
+        for key in seq_dict:
+            result[key] = {
+                layer: {s: np.load(layer_paths[layer][s] / f"{key}.npy") for s in settings}
+                for layer in layers
+            }
+        return result
+
+    missing_keys = [k for k, ok in key_to_exist.items() if not ok]
+    print(f"Generating {model} embeddings for {len(missing_keys)} sequence(s), layers {layers}")
+    print(f"Loading {model} model...")
+
+    import esm
+    torch.cuda.empty_cache()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if model == 'esm2':
+        model_obj, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+        batch_converter = alphabet.get_batch_converter()
+        model_obj.eval()
+        model_obj = model_obj.to(device)
+        print(f"Using device: {device}")
+
+        batches = [missing_keys[i:i + batch_size] for i in range(0, len(missing_keys), batch_size)]
+        for batch_keys in tqdm(batches, desc=f"ESM2 layers {layers}"):
+            data = [(k, seq_dict[k]) for k in batch_keys]
+            _, _, batch_tokens = batch_converter(data)
+            batch_tokens = batch_tokens.to(device)
+            with torch.no_grad():
+                results = model_obj(batch_tokens, repr_layers=layers, return_contacts=False)
+            token_reps = results["representations"]
+            for i, (label, seq) in enumerate(data):
+                for layer in layers:
+                    paths = layer_paths[layer]
+                    if all((paths[s] / f"{label}.npy").exists() for s in settings):
+                        continue
+                    res_emb = token_reps[layer][i, 1:len(seq) + 1].cpu().numpy()
+                    if "residue" in settings:
+                        np.save(paths["residue"] / f"{label}.npy", res_emb)
+                    if "mean" in settings:
+                        np.save(paths["mean"] / f"{label}.npy", res_emb.mean(0))
+                    if "weighted" in settings:
+                        weights = _fetch_weights(label, weights_df, weights_key_col, weights_col)
+                        if len(weights) != len(res_emb):
+                            raise ValueError(f"Weight length mismatch for {label}: {len(weights)} vs {len(res_emb)}")
+                        np.save(paths["weighted"] / f"{label}.npy", _weighted_mean(res_emb, weights, normalize=True))
+            del batch_tokens, results
+            gc.collect()
+            torch.cuda.empty_cache()
+        del model_obj
+        gc.collect()
+
+    elif model == 'esmc':
+        from esm.models.esmc import ESMC
+        from esm.sdk.api import ESMProtein, LogitsConfig
+
+        model_obj = ESMC.from_pretrained("esmc_600m").to(device)
+        model_obj.eval()
+        config = LogitsConfig(sequence=True, return_hidden_states=True, return_embeddings=True)
+
+        for key in tqdm(missing_keys, desc=f"ESM-C layers {layers}"):
+            sequence = seq_dict[key]
+            protein = ESMProtein(sequence=sequence)
+            tensor = model_obj.encode(protein)
+            logits_out = model_obj.logits(tensor, config)
+            for layer in layers:
+                paths = layer_paths[layer]
+                if all((paths[s] / f"{key}.npy").exists() for s in settings):
+                    continue
+                layer_emb = logits_out.hidden_states[layer]  # [1, L+2, H]
+                layer_emb = layer_emb.squeeze(0).to(torch.float32).cpu().numpy()
+                residue_emb = layer_emb[1:-1]  # [L, H]
+                if "residue" in settings:
+                    np.save(paths["residue"] / f"{key}.npy", residue_emb)
+                if "mean" in settings:
+                    np.save(paths["mean"] / f"{key}.npy", residue_emb.mean(0))
+                if "weighted" in settings:
+                    weights = _fetch_weights(key, weights_df, weights_key_col, weights_col)
+                    if len(weights) != len(residue_emb):
+                        raise ValueError(f"Weight length mismatch for {key}: {len(weights)} vs {len(residue_emb)}")
+                    np.save(paths["weighted"] / f"{key}.npy", _weighted_mean(residue_emb, weights, normalize=True))
+        del model_obj
+        gc.collect()
+
+    if only_save:
+        return None
+    result = {}
+    for key in seq_dict:
+        result[key] = {
+            layer: {s: np.load(layer_paths[layer][s] / f"{key}.npy") for s in settings}
+            for layer in layers
+        }
+    return result
+
+
 if __name__ == '__main__':
     """
     Extract ESM embeddings for unique sequences.
     Default: Runs for ESM2 layers 26 and 29, and ESMC layers 24 and 32.
-    
+
     Usage:
         # Default behavior (residue embeddings)
         python prot_embeddings.py
-        
+
         # Mean embeddings
         python prot_embeddings.py --setting mean
-        
+
         # Weighted embeddings using binding site scores
         python prot_embeddings.py --setting weighted --weights_file path/to/binding_sites.tsv
-        
+
         # Custom sequence file and models
         python prot_embeddings.py --seq_file path/to/sequences.txt --models esm2 esmc --layers 26 29 24 32
     """
@@ -488,28 +631,49 @@ Examples:
             ('esmc', 32)
         ]
     
-    # Extract embeddings for each model-layer pair
-    for model, layer in model_layer_pairs:
+    # Group model_layer_pairs by model so each model is loaded only once
+    from collections import defaultdict
+    model_to_layers = defaultdict(list)
+    for model_name, layer in model_layer_pairs:
+        model_to_layers[model_name].append(layer)
+
+    for model_name, model_layers in model_to_layers.items():
         print(f"\n{'='*70}")
-        print(f"Extracting {model.upper()} {args.setting} embeddings for layer {layer}")
+        print(f"Extracting {model_name.upper()} {args.setting} embeddings for layers {model_layers}")
         print(f"{'='*70}")
-        
-        embd = get_embeddings(
-            seq_dict, 
-            batch_size=args.batch_size, 
-            model=model, 
-            id_to_seq=seq_id_to_seq,
-            setting=args.setting, 
-            all_layers=False, 
-            only_save=True,
-            layer=layer,
-            weights_df=weights_df,
-            weights_key_col=args.weights_key_col,
-            weights_col=args.weights_col,
-        )
-        
-        print(f"✓ Completed {model.upper()} layer {layer} {args.setting} embedding extraction")
-    
+
+        if model_name in ('esm2', 'esmc'):
+            get_embeddings_multi_layer(
+                seq_dict,
+                layers=model_layers,
+                batch_size=args.batch_size,
+                model=model_name,
+                id_to_seq=seq_id_to_seq,
+                setting=args.setting,
+                only_save=True,
+                weights_df=weights_df,
+                weights_key_col=args.weights_key_col,
+                weights_col=args.weights_col,
+            )
+        else:
+            # Fallback for models not supported by get_embeddings_multi_layer (e.g. esm1v)
+            for layer in model_layers:
+                get_embeddings(
+                    seq_dict,
+                    batch_size=args.batch_size,
+                    model=model_name,
+                    id_to_seq=seq_id_to_seq,
+                    setting=args.setting,
+                    all_layers=False,
+                    only_save=True,
+                    layer=layer,
+                    weights_df=weights_df,
+                    weights_key_col=args.weights_key_col,
+                    weights_col=args.weights_col,
+                )
+
+        print(f"✓ Completed {model_name.upper()} layers {model_layers} {args.setting} embedding extraction")
+
     print(f"\n{'='*70}")
     print(f"✓ All embeddings complete for {len(seq_dict)} sequences")
     print(f"{'='*70}")
