@@ -88,14 +88,20 @@ def load_t5_model():
     gc.collect()
     torch.cuda.empty_cache()
     try:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         tokenizer = T5Tokenizer.from_pretrained(
             PROTT5XL_MODEL_PATH, do_lower_case=False
         )
-        model = T5EncoderModel.from_pretrained(
-            PROTT5XL_MODEL_PATH, low_cpu_mem_usage=True, torch_dtype=torch.float16
-        )
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        model = model.eval()
+        model_kwargs = {"low_cpu_mem_usage": True}
+        # float16 fails on CPU backends ("addmm_impl_cpu_ not implemented for 'Half'")
+        # so we keep fp16 only when CUDA is available.
+        if device.type == "cuda":
+            model_kwargs["torch_dtype"] = torch.float16
+        else:
+            model_kwargs["torch_dtype"] = torch.float32
+
+        model = T5EncoderModel.from_pretrained(PROTT5XL_MODEL_PATH, **model_kwargs)
+        model = model.to(device).eval()
         print("T5 model loaded and moved to device.")
         return tokenizer, model, device
     except Exception as e:
