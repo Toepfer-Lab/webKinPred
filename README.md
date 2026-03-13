@@ -1,6 +1,6 @@
-# WebKinPred
+# kineticXpredictor
 
-WebKinPred is a production web interface for predicting enzyme kinetic parameters (kcat and KM) from protein sequence and substrate SMILES. It consolidates several state‑of‑the‑art machine learning / deep learning models behind a unified, asynchronous job API so you can submit sequences and retrieve structured predictions.
+kineticXpredictor is a production web interface for predicting enzyme kinetic parameters (kcat and KM) from protein sequence and substrate SMILES. It consolidates several state‑of‑the‑art machine learning / deep learning models behind a unified, asynchronous job API so you can submit sequences and retrieve structured predictions.
 
 **Live service:** [https://kineticxpredictor.humanmetabolism.org/](https://kineticxpredictor.humanmetabolism.org/)
 
@@ -8,14 +8,18 @@ WebKinPred is a production web interface for predicting enzyme kinetic parameter
 
 | Engine | Input needed | Output | Citation |
 |--------|--------------|--------|----------|
-| KinForm-H | Protein sequence + substrate SMILES | kcat or KM | [Alwer & Fleming, Arxiv](https://arxiv.org/abs/2507.14639) ([GitHub](https://github.com/Digital-Metabolic-Twin-Centre/KinForm)) |
-| KinForm-L | Protein sequence + substrate SMILES | kcat or KM | [Alwer & Fleming, Arxiv](https://arxiv.org/abs/2507.14639) ([GitHub](https://github.com/Digital-Metabolic-Twin-Centre/KinForm)) |
-| UniKP | Protein sequence + substrate SMILES | kcat or KM | [Yu et al., Nat Commun 2023](https://www.nature.com/articles/s41467-023-44113-1) ([GitHub](https://github.com/Luo-SynBioLab/UniKP)) |
+| KinForm-H | Protein sequence + substrate SMILES | kcat or Km | [Alwer & Fleming, Arxiv](https://arxiv.org/abs/2507.14639) ([GitHub](https://github.com/Digital-Metabolic-Twin-Centre/KinForm)) |
+| KinForm-L | Protein sequence + substrate SMILES | kcat | [Alwer & Fleming, Arxiv](https://arxiv.org/abs/2507.14639) ([GitHub](https://github.com/Digital-Metabolic-Twin-Centre/KinForm)) |
+| UniKP | Protein sequence + substrate SMILES | kcat or Km | [Yu et al., Nat Commun 2023](https://www.nature.com/articles/s41467-023-44113-1) ([GitHub](https://github.com/Luo-SynBioLab/UniKP)) |
 | DLKcat | Protein sequence + substrate SMILES | kcat | [Li et al., Nat Catal 2022](https://www.nature.com/articles/s41929-022-00798-z) ([GitHub](https://github.com/SysBioChalmers/DLKcat)) |
 | TurNup | Protein sequence + substrates list + products list | kcat | [Kroll et al., Nat Commun 2023](https://www.nature.com/articles/s41467-023-39840-4) ([GitHub](https://github.com/AlexanderKroll/Kcat_prediction)) |
-| EITLEM | Protein sequence + substrate SMILES | kcat or KM | [Shen et al., Biotechnol Adv 2024](https://www.sciencedirect.com/science/article/pii/S2667109324002665) ([GitHub](https://github.com/XvesS/EITLEM-Kinetics)) |
+| EITLEM | Protein sequence + substrate SMILES | kcat or Km | [Shen et al., Biotechnol Adv 2024](https://www.sciencedirect.com/science/article/pii/S2667109324002665) ([GitHub](https://github.com/XvesS/EITLEM-Kinetics)) |
 
 Each model is loaded with its published weights/code from `models/` and invoked through integration wrappers in `api/prediction_engines/`, so new engines can be added with minimal wiring.
+
+## Adding a New Prediction Method
+
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for a step-by-step guide.
 
 ## Features
 
@@ -24,7 +28,7 @@ Each model is loaded with its published weights/code from `models/` and invoked 
 * Sequence similarity distribution of input data vs mehtods' training data (Using mmseq2).
 * Caching sequence embeddings.
 
-## Tech Stack
+## Stack
 
 ### Frontend
 
@@ -58,20 +62,6 @@ jobs, poll their status, and download results — no web browser required.
 
 > **Full interactive documentation** is also available on the live site at
 > [`/api-docs`](https://kineticxpredictor.humanmetabolism.org/api-docs).
-
----
-
-### Getting an API Key
-
-API keys are issued on request. Contact the administrators with your use case to
-receive a Bearer token. Keys look like `ak_7f8a9b2c3d4e5f6a…` and are sent in
-the `Authorization` header of every authenticated request.
-
-If you are self-hosting, generate a key via the management command:
-
-```bash
-python manage.py create_api_key --ip 1.2.3.4 --label "My Lab Script"
-```
 
 ---
 
@@ -253,11 +243,11 @@ contains `histogram_max`, `histogram_mean` (10-bin arrays, 0–100% identity),
 | Method | Predicts | Required columns | Max sequence length |
 | ------ | -------- | ---------------- | ------------------- |
 | DLKcat | kcat | `Protein Sequence`, `Substrate` | No limit |
-| TurNup | kcat | `Protein Sequence`, `Substrates`, `Products` | 1,022 residues |
-| EITLEM | kcat or KM | `Protein Sequence`, `Substrate` | 1,022 residues |
-| UniKP | kcat or KM | `Protein Sequence`, `Substrate` | 1,000 residues |
-| KinForm-H | kcat or KM | `Protein Sequence`, `Substrate` | 1,000 residues |
-| KinForm-L | kcat only | `Protein Sequence`, `Substrate` | 1,000 residues |
+| TurNup | kcat | `Protein Sequence`, `Substrates`, `Products` | 1,024 residues |
+| EITLEM | kcat or Km | `Protein Sequence`, `Substrate` | 1,024 residues |
+| UniKP | kcat or Km | `Protein Sequence`, `Substrate` | 1,000 residues |
+| KinForm-H | kcat or Km | `Protein Sequence`, `Substrate` | 1,500 residues |
+| KinForm-L | kcat only | `Protein Sequence`, `Substrate` | 1,500 residues |
 
 Substrates must be SMILES or InChI strings. For TurNup, separate multiple
 substrates/products with semicolons: `CC(=O)O;C1CCCCC1`.
@@ -292,10 +282,6 @@ All errors return JSON with a single `error` key:
 | 500 | Internal server error |
 
 ---
-
-## Adding a New Prediction Method
-
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for a step-by-step guide. The short version: define a descriptor in `api/methods/`, then choose either the shared subprocess path (script only) or a custom engine in `api/prediction_engines/`, and register runtime paths in config. The framework auto-discovers new methods — no manual wiring needed.
 
 ## Attribution
 

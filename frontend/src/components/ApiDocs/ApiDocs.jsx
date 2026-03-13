@@ -780,19 +780,19 @@ export default function ApiDocs() {
               </tr>
               <tr>
                 <td><code>EITLEM</code></td>
-                <td>kcat or KM</td>
+                <td>kcat or Km</td>
                 <td><code>Protein Sequence</code>, <code>Substrate</code></td>
                 <td>1,024 residues</td>
               </tr>
               <tr>
                 <td><code>UniKP</code></td>
-                <td>kcat or KM</td>
+                <td>kcat or Km</td>
                 <td><code>Protein Sequence</code>, <code>Substrate</code></td>
                 <td>1,000 residues</td>
               </tr>
               <tr>
                 <td><code>KinForm-H</code></td>
-                <td>kcat or KM</td>
+                <td>kcat or Km</td>
                 <td><code>Protein Sequence</code>, <code>Substrate</code></td>
                 <td>1,500 residues</td>
               </tr>
