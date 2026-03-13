@@ -20,7 +20,7 @@ print(f"FASTA file created at {output_path}")
 
 import json
 
-json_path = '/home/saleh/webKinPred/api/DLKcat/DeeplearningApproach/Data/database/Kcat_combination_0918_wildtype_mutant.json'
+json_path = '/home/saleh/webKinPred/models/DLKcat/DeeplearningApproach/Data/database/Kcat_combination_0918_wildtype_mutant.json'
 output_path = '/home/saleh/webKinPred/fastas/dlkcat_sequences.fasta'
 
 with open(json_path, 'r') as f:

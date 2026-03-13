@@ -21,12 +21,12 @@ services:
       - ./db.sqlite3:/app/db.sqlite3
       - ./manage.py:/app/manage.py
       - ./api:/app/api
+      - ./models:/app/models
       - ./db_models:/app/db_models
       - ./webKinPred:/app/webKinPred
       - ./fastas:/app/fastas
       - ./tools:/app/tools
       - ./staticfiles:/app/staticfiles
-      - ./api/UniKP-main/models:/app/api/UniKP-main/models:ro
     environment:
       - PYTHONPATH=/app
       - DEBUG=1
@@ -77,12 +77,12 @@ services:
       - ./db.sqlite3:/app/db.sqlite3
       - ./manage.py:/app/manage.py
       - ./api:/app/api
+      - ./models:/app/models
       - ./db_models:/app/db_models
       - ./webKinPred:/app/webKinPred
       - ./fastas:/app/fastas
       - ./tools:/app/tools
       - ./staticfiles:/app/staticfiles
-      - ./api/UniKP-main/models:/app/api/UniKP-main/models:ro
     environment:
       - PYTHONPATH=/app
       - DEBUG=1
@@ -112,12 +112,12 @@ services:
       - ./db.sqlite3:/app/db.sqlite3
       - ./manage.py:/app/manage.py
       - ./api:/app/api
+      - ./models:/app/models
       - ./db_models:/app/db_models
       - ./webKinPred:/app/webKinPred
       - ./fastas:/app/fastas
       - ./tools:/app/tools
       - ./staticfiles:/app/staticfiles
-      - ./api/UniKP-main/models:/app/api/UniKP-main/models:ro
       
     environment:
       - PYTHONPATH=/app

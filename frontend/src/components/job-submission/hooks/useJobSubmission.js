@@ -210,7 +210,8 @@ export default function useJobSubmission() {
       }
     } finally {
       setIsValidating(false);
-      setValidationDone(true);
+      setValidationDone(false);
+      setShowLogOverlay(false);
       setTimeout(() => closeStream(), 5000);
     }
   };

@@ -16,6 +16,8 @@ import psutil
 import resource
 import numpy as np
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 # ---------------- Memory helpers ----------------
 
 def rss_mb() -> float:
@@ -192,15 +194,21 @@ def test_unikp_memory():
     print("=== Peak RAM measurement: UniKP (single sample) ===")
 
     # --- Config (edit as needed) 
-    UNIKP_DIR = '/home/saleh/webKinPred/api/UniKP-main'
-    SEQ_VEC_DIR = "/home/saleh/webKinPred/media/sequence_info//prot_t5_last/mean_vecs"
-    PROTT5XL_MODEL_PATH = '/home/saleh/webKinPred/api/UniKP-main/models/prot_t5_xl_uniref50'
-    SEQMAP_PY = "/home/saleh/webKinPredEnv/bin/python"
-    SEQMAP_CLI = "/home/saleh/webKinPred/tools/seqmap/main.py"
-    SEQMAP_DB = "/home/saleh/webKinPred/media/sequence_info/seqmap.sqlite3"
-    VOCAB_PATH = '/home/saleh/webKinPred/api/UniKP-main/vocab.pkl'
-    TRFM_PATH = '/home/saleh/webKinPred/api/UniKP-main/trfm_12_23000.pkl'
-    PREDICTOR_PATH = '/home/saleh/webKinPred/api/UniKP-main/models/UniKP_KCAT.pkl'
+    UNIKP_DIR = os.path.join(REPO_ROOT, "models", "UniKP-main")
+    SEQ_VEC_DIR = os.path.join(
+        REPO_ROOT, "media", "sequence_info", "prot_t5_last", "mean_vecs"
+    )
+    PROTT5XL_MODEL_PATH = os.path.join(
+        REPO_ROOT, "models", "UniKP-main", "models", "prot_t5_xl_uniref50"
+    )
+    SEQMAP_PY = os.environ.get("SEQMAP_PY", sys.executable)
+    SEQMAP_CLI = os.path.join(REPO_ROOT, "tools", "seqmap", "main.py")
+    SEQMAP_DB = os.path.join(REPO_ROOT, "media", "sequence_info", "seqmap.sqlite3")
+    VOCAB_PATH = os.path.join(REPO_ROOT, "models", "UniKP-main", "vocab.pkl")
+    TRFM_PATH = os.path.join(REPO_ROOT, "models", "UniKP-main", "trfm_12_23000.pkl")
+    PREDICTOR_PATH = os.path.join(
+        REPO_ROOT, "models", "UniKP-main", "models", "UniKP_KCAT.pkl"
+    )
 
     # Test sample
     max_sequence_list = np.random.choice(list("ACDEFGHIKLMNPQRSTVWY"), size=(1000,))
@@ -338,7 +346,7 @@ def test_unikp_memory():
 
 if __name__ == "__main__":
     # Ensure UniKP code path (for direct execution)
-    sys.path.insert(0, '/home/saleh/webKinPred/api/UniKP-main')
+    sys.path.insert(0, os.path.join(REPO_ROOT, "models", "UniKP-main"))
 
     model_mem, peak_proc_mem, baseline_mem = test_unikp_memory()
     total_max_ram = baseline_mem + peak_proc_mem

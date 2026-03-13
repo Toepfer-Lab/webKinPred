@@ -7,6 +7,9 @@ import threading
 import time
 import torch
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DLKCAT_BASE = os.path.join(REPO_ROOT, "models", "DLKcat", "DeeplearningApproach")
+
 def get_memory_usage():
     """Get current memory usage in MB"""
     process = psutil.Process(os.getpid())
@@ -49,12 +52,12 @@ def test_dlkcat_memory():
     print("Testing DLKcat memory usage...")
     
     # Add the DLKcat path to sys.path
-    sys.path.insert(0, '/home/saleh/webKinPred/api/DLKcat/DeeplearningApproach/Code/example')
-    sys.path.insert(0, '/home/saleh/webKinPred/api/DLKcat/DeeplearningApproach/Code')
+    sys.path.insert(0, os.path.join(DLKCAT_BASE, "Code", "example"))
+    sys.path.insert(0, os.path.join(DLKCAT_BASE, "Code"))
     
     # Set environment variables
-    os.environ['DLKCAT_DATA_PATH'] = '/home/saleh/webKinPred/api/DLKcat/DeeplearningApproach/Data'
-    os.environ['DLKCAT_RESULTS_PATH'] = '/home/saleh/webKinPred/api/DLKcat/DeeplearningApproach/Results'
+    os.environ['DLKCAT_DATA_PATH'] = os.path.join(DLKCAT_BASE, "Data")
+    os.environ['DLKCAT_RESULTS_PATH'] = os.path.join(DLKCAT_BASE, "Results")
     
     # Measure initial memory
     initial_memory = get_memory_usage()
@@ -67,8 +70,8 @@ def test_dlkcat_memory():
     from collections import defaultdict
     
     # Load dictionaries and model
-    data_path = '/home/saleh/webKinPred/api/DLKcat/DeeplearningApproach/Data'
-    results_path = '/home/saleh/webKinPred/api/DLKcat/DeeplearningApproach/Results'
+    data_path = os.path.join(DLKCAT_BASE, "Data")
+    results_path = os.path.join(DLKCAT_BASE, "Results")
     
     fingerprint_dict = model.load_pickle(f'{data_path}/input/fingerprint_dict.pickle')
     atom_dict = model.load_pickle(f'{data_path}/input/atom_dict.pickle')

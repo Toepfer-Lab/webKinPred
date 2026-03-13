@@ -15,6 +15,8 @@ import psutil
 import resource
 import numpy as np
 
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 # ---------------- Memory helpers ----------------
 
 def rss_mb() -> float:
@@ -118,8 +120,8 @@ def test_turnup_memory():
     print("=== Peak RAM measurement: TurNup (single sequence) ===")
 
     # --- Config (edit as needed) ---
-    code_dir = '/home/saleh/webKinPred/api/TurNup/code'
-    data_dir = '/home/saleh/webKinPred/api/TurNup/data'
+    code_dir = os.path.join(REPO_ROOT, "models", "TurNup", "code")
+    data_dir = os.path.join(REPO_ROOT, "models", "TurNup", "data")
     seq_len = 1022  # max-length for ESM-1b token limit (approx.)
     test_substrate = 'InChI=1S/H2O/h1H2;InChI=1S/H2O/h1H2'
     test_product   = 'InChI=1S/H2O/h1H2;InChI=1S/H2O/h1H2'

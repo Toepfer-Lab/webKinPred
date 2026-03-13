@@ -11,9 +11,9 @@ What it does:
 
 Usage (with your paths):
   python test_eitlem_peak_ram.py \
-    --esm /home/saleh/webKinPred/api/EITLEM/Weights/esm1v/esm1v_t33_650M_UR90S_1.pt \
-    --eitlem /home/saleh/webKinPred/api/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787 \
-    --code /home/saleh/webKinPred/api/EITLEM/Code \
+    --esm /home/saleh/webKinPred/models/EITLEM/Weights/esm1v/esm1v_t33_650M_UR90S_1.pt \
+    --eitlem /home/saleh/webKinPred/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787 \
+    --code /home/saleh/webKinPred/models/EITLEM/Code \
     --seq_len 1022 --smiles CCO --threads 1
 
 Tip: run once with threads=1 (reproducible), then without setting threads to see the real-world worst case.
@@ -28,6 +28,9 @@ import argparse
 import psutil
 import resource
 from typing import Callable, Dict, Any
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+EITLEM_ROOT = os.path.join(REPO_ROOT, "models", "EITLEM")
 
 # ---------- Memory helpers ----------
 
@@ -99,9 +102,9 @@ def run_stage(label: str, fn: Callable[[], Any], mon: MemoryMonitor, report: Dic
 
 def main():
     ap = argparse.ArgumentParser(description="Peak RAM measurement for ESM-1v + EITLEM (single sequence).")
-    ap.add_argument("--esm",   default="/home/saleh/webKinPred/api/EITLEM/Weights/esm1v/esm1v_t33_650M_UR90S_1.pt", help="Path to ESM-1v weights (.pt)")
-    ap.add_argument("--eitlem", default="/home/saleh/webKinPred/api/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787", help="Path to EITLEM kcat model state_dict")
-    ap.add_argument("--code",  default="/home/saleh/webKinPred/api/EITLEM/Code", help="Path to EITLEM/Code to add to sys.path")
+    ap.add_argument("--esm",   default=os.path.join(EITLEM_ROOT, "Weights", "esm1v", "esm1v_t33_650M_UR90S_1.pt"), help="Path to ESM-1v weights (.pt)")
+    ap.add_argument("--eitlem", default=os.path.join(EITLEM_ROOT, "Weights", "KCAT", "iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787"), help="Path to EITLEM kcat model state_dict")
+    ap.add_argument("--code",  default=os.path.join(EITLEM_ROOT, "Code"), help="Path to EITLEM/Code to add to sys.path")
     ap.add_argument("--seq_len", type=int, default=1022, help="Sequence length to test (max for ESM-1v ~1022 aa)")
     ap.add_argument("--smiles", default="CCOCCOCCOCCOCCOCCOCCOCCOCCOCCOCCOCCOCCOCCOCCOCCOCCO", help="Substrate SMILES (MACCS fingerprint)")
     ap.add_argument("--threads", type=int, default=None, help="Set torch/OMP thread count (e.g., 1 for reproducible memory)")

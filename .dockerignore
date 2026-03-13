@@ -84,22 +84,23 @@ fastas/dbs/
 # ── Large model weights (mounted as volumes at runtime) ──
 
 # EITLEM
-api/EITLEM/Weights/
+models/EITLEM/Weights/
 
 # TurNup (entire data dir; saved_models mounted separately)
-api/TurNup/data/
+models/TurNup/data/
 
 # UniKP
-api/UniKP-main/models/
+models/UniKP-main/models/
 
 # DLKcat
-api/DLKcat/DeeplearningApproach/Data/
-api/DLKcat/DeeplearningApproach/Results/
-api/DLKcat/BayesianApproach/
+models/DLKcat/DeeplearningApproach/Data/
+models/DLKcat/DeeplearningApproach/Results/
+models/DLKcat/BayesianApproach/
 
 # KinForm trained models (mounted as volume)
-api/KinForm/results/
+models/KinForm/results/
 
 # ── Test / dev scripts (not needed in image) ─────
 test_*.py
 test_*.csv
+tests/

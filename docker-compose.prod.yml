@@ -93,11 +93,11 @@ services:
       - ./db.sqlite3:/app/db.sqlite3
       - ./media/sequence_info/seqmap.sqlite3:/app/media/sequence_info/seqmap.sqlite3
       - ./staticfiles:/app/staticfiles
-      - ./api/EITLEM/Weights:/app/api/EITLEM/Weights:ro
-      - ./api/TurNup/data/saved_models:/app/api/TurNup/data/saved_models:ro
-      - ./api/UniKP-main/models:/app/api/UniKP-main/models:ro
-      - ./api/DLKcat/DeeplearningApproach:/app/api/DLKcat/DeeplearningApproach:ro
-      - ./api/KinForm/results/trained_models:/app/api/KinForm/results/trained_models:ro
+      - ./models/EITLEM/Weights:/app/models/EITLEM/Weights:ro
+      - ./models/TurNup/data/saved_models:/app/models/TurNup/data/saved_models:ro
+      - ./models/UniKP-main/models:/app/models/UniKP-main/models:ro
+      - ./models/DLKcat/DeeplearningApproach:/app/models/DLKcat/DeeplearningApproach:ro
+      - ./models/KinForm/results/trained_models:/app/models/KinForm/results/trained_models:ro
     environment:
       <<: *common-env
     depends_on:

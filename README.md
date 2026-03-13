@@ -15,7 +15,7 @@ WebKinPred is a production web interface for predicting enzyme kinetic parameter
 | TurNup | Protein sequence + substrates list + products list | kcat | [Kroll et al., Nat Commun 2023](https://www.nature.com/articles/s41467-023-39840-4) ([GitHub](https://github.com/AlexanderKroll/Kcat_prediction)) |
 | EITLEM | Protein sequence + substrate SMILES | kcat or KM | [Shen et al., Biotechnol Adv 2024](https://www.sciencedirect.com/science/article/pii/S2667109324002665) ([GitHub](https://github.com/XvesS/EITLEM-Kinetics)) |
 
-Each model is loaded with its published weights/code (see `api/prediction_engines/`) and invoked through a standard internal interface so new engines can be added with minimal wiring.
+Each model is loaded with its published weights/code from `models/` and invoked through integration wrappers in `api/prediction_engines/`, so new engines can be added with minimal wiring.
 
 ## Features
 
@@ -295,7 +295,7 @@ All errors return JSON with a single `error` key:
 
 ## Adding a New Prediction Method
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for a step-by-step guide. The short version: define a descriptor in `api/methods/`, then choose either the shared subprocess path (script only) or a custom engine in `api/prediction_engines/`, and register runtime paths in config. The framework auto-discovers new methods — no manual wiring needed.
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for a step-by-step guide. The short version: define a descriptor in `api/methods/`, then choose either the shared subprocess path (script only) or a custom engine in `api/prediction_engines/`, and register runtime paths in config. The framework auto-discovers new methods — no manual wiring needed.
 
 ## Attribution
 

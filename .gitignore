@@ -1,17 +1,42 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Environment and Docker
+.env
+.env.local
+.env.production
+docker-compose.override.yml
 
+# Runtime artifacts (keep out of repo/root)
 db.sqlite3
-# dependencies
+celerybeat-schedule
+media/
+staticfiles/
+mmseqs_tmp/
+fastas/dbs/
+*.sqlite3
+
+# Vendored model runtime data (generated / large)
+models/EITLEM/Weights/
+models/EITLEM/Weights.zip
+models/DLKcat/DeeplearningApproach/Data/
+models/DLKcat/DeeplearningApproach/Results/
+models/DLKcat/BayesianApproach/
+models/TurNup/data/
+models/UniKP-main/models/
+models/UniKP-main/models/*.pkl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Frontend
 frontend/node_modules
 frontend/.pnp
 frontend/.pnp.js
-
-# testing
 frontend/coverage
-
-# production
 frontend/build
-# misc
 frontend/src/.env
 frontend/.DS_Store
 frontend/.env.local
@@ -22,26 +47,5 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 
-# Docker
-.env
-.env.local
-.env.production
-docker-compose.override.yml
-
-media
-media/jobs
-api/EITLEM/Weights
-api/EITLEM/Weights.zip
-api/DLKcat/DeeplearningApproach/Data
-api/DLKcat/DeeplearningApproach/Results
-api/DLKcat/BayesianApproach
-api/TurNup/data
-api/UniKP-main/models
-api/UniKP-main/run_unikp.py
-__pycache__/
-*.pyc
-
-webKinPred/config_local.py
-api/UniKP-main/models/*.pkl
-.vscode/settings.json
+# Editor
 .vscode/settings.json

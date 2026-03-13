@@ -148,9 +148,9 @@ RUN find /opt/conda -name "*.pyc" -delete \
 # ── Application code (only this layer + below rebuild on git pull) ────────────
 COPY . .
 
-RUN mkdir -p /app/api/EITLEM/Weights \
-             /app/api/TurNup/data/saved_models \
-             /app/api/UniKP-main/models \
+RUN mkdir -p /app/models/EITLEM/Weights \
+             /app/models/TurNup/data/saved_models \
+             /app/models/UniKP-main/models \
              /app/media/sequence_info \
              /app/staticfiles \
              /app/mmseqs_tmp \
