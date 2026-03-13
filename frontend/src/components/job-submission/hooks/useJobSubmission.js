@@ -35,6 +35,7 @@ export default function useJobSubmission() {
   const [csvFormatInfo, setCsvFormatInfo] = useState(null);
   const [csvFormatValid, setCsvFormatValid] = useState(false);
   const [csvFormatError, setCsvFormatError] = useState('');
+  const [csvParsing, setCsvParsing] = useState(false);
   const [similarityData, setSimilarityData] = useState(null);
   const [submissionResult, setSubmissionResult] = useState(null);
 
@@ -107,6 +108,7 @@ export default function useJobSubmission() {
       return;
     }
 
+    setCsvParsing(true);
     try {
       const data = await detectCsvFormat(file);
       if (data.status === 'valid') {
@@ -124,6 +126,8 @@ export default function useJobSubmission() {
       setCsvFormatInfo(null);
       setCsvFormatValid(false);
       setCsvFormatError(err?.response?.data?.error || 'Error detecting CSV format.');
+    } finally {
+      setCsvParsing(false);
     }
   };
 
@@ -255,6 +259,7 @@ export default function useJobSubmission() {
     csvFormatInfo,
     csvFormatValid,
     csvFormatError,
+    csvParsing,
     useExperimental,
     setUseExperimental,
     handleLongSeqs,

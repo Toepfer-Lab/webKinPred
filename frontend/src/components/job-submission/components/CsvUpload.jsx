@@ -6,6 +6,7 @@ export default function CsvUpload({
   csvFormatValid,
   csvFormatInfo,
   csvFormatError,
+  csvParsing,
   onFileSelected,
   onClickValidate,
   fileName,
@@ -85,6 +86,13 @@ const hasFile = !!fileName && fileName !== 'No file chosen';
           </Form.Group>
         </Form>
 
+        {csvParsing && (
+          <div className="csv-parsing-indicator mt-3" aria-live="polite">
+            <span className="csv-parsing-spinner" aria-hidden="true" />
+            Reading CSV…
+          </div>
+        )}
+
         {csvFormatValid && csvFormatInfo?.csv_type && (
           <Alert variant="success" className="mt-3">
           Detected a <strong>{csvFormatInfo.csv_type === 'multi' ? 'multi-substrate' : 'single-substrate'}</strong> CSV with {csvFormatInfo.num_rows} rows. You may now choose compatible methods.
@@ -115,6 +123,7 @@ CsvUpload.propTypes = {
   csvFormatValid: PropTypes.bool.isRequired,
   csvFormatInfo: PropTypes.object,
   csvFormatError: PropTypes.string,
+  csvParsing: PropTypes.bool,
   onFileSelected: PropTypes.func.isRequired,
   onClickValidate: PropTypes.func.isRequired,
   fileName: PropTypes.string.isRequired,

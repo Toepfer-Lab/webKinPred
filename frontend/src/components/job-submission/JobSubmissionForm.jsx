@@ -31,6 +31,7 @@ export default function JobSubmissionForm() {
               csvFormatValid={state.csvFormatValid}
               csvFormatInfo={state.csvFormatInfo}
               csvFormatError={state.csvFormatError}
+              csvParsing={state.csvParsing}
               onFileSelected={state.onFileSelected}
               onClickValidate={() => state.setShowPreprocessPrompt(true)}
               fileName={state.fileName}
