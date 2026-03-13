@@ -98,6 +98,8 @@ Rules:
 - `predictions` length must equal `rows` length.
 - `invalid_indices` is optional and is relative to `rows`.
 - Use `null` for missing predictions.
+- If your script uses PyTorch, handle both GPU and CPU runtimes:
+  use CUDA only when `torch.cuda.is_available()` is `True`, and keep a CPU fallback.
 
 Path config example:
 
