@@ -173,12 +173,68 @@ DATA_PATHS["YourMethod"] = "/app/api/YourMethod/data"
 
 If your method can reuse an existing env, skip steps 1-2 and only add the config keys.
 
-## 4. Reuse Existing Embeddings First
+## 4. Embeddings: Sequence ID Mapping and Cache Reuse
 
-Check:
-- `api/embeddings/registry.py`
+If your method uses protein embeddings, follow this pattern.
 
-If an embedding is already available, reuse it and list it in `embeddings_used`.
+### 4.1 Resolve sequence IDs first (once per batch)
+
+Do not name embedding files by raw sequence.  
+Resolve sequence IDs with `tools/seqmap/main.py` and use those IDs as filenames.
+
+Preferred pattern:
+- Call `batch-get-or-create` once for all input sequences in a job.
+- Keep returned IDs in input order (duplicates are allowed and expected).
+- Use each `seq_id` as the cache key for embedding files.
+
+`KinForm`, `UniKP`, and `EITLEM` already use batch ID resolution. `TurNup` still does extra per-call resolution in parts of its legacy script, but new methods should follow the single-batch pattern above.
+
+### 4.2 Use load/generate/save with those IDs
+
+For each sequence:
+1. Build the expected cache path from `seq_id`.
+2. If file exists, load it.
+3. If missing, generate embedding.
+4. Save to the same shared cache path using `seq_id`.
+
+Minimal pattern:
+
+```python
+seq_ids = resolve_seq_ids_via_cli(sequences)  # one call, ordered
+for seq, seq_id in zip(sequences, seq_ids):
+    vec_path = f"{EMB_DIR}/{seq_id}.npy"
+    if os.path.exists(vec_path):
+        vec = np.load(vec_path)
+    else:
+        vec = compute_embedding(seq)
+        np.save(vec_path, vec)
+```
+
+### 4.3 Reuse existing embedding models and directories
+
+Check `api/embeddings/registry.py` first, then reuse existing paths.
+
+- `prot_t5` (shared): Python path key `t5`; cached under `media/sequence_info/prot_t5_*` (for example `prot_t5_last/mean_vecs/{seq_id}.npy`).
+- `esm2` (shared): Python path key `esm2`; cached under `media/sequence_info/esm2_layer_26` and `esm2_layer_29`.
+- `esmc` (shared): Python path key `esmc`; cached under `media/sequence_info/esmc_layer_24` and `esmc_layer_32`.
+- `pseq2sites` (shared support model): Python path key `pseq2sites`; binding-site cache at `media/pseq2sites/binding_sites_all.tsv` keyed by `PDB == seq_id`.
+
+Method-specific examples in current codebase:
+- `UniKP` reuses `media/sequence_info/prot_t5_last/mean_vecs/{seq_id}.npy`.
+- `EITLEM` stores ESM-1v embeddings in `media/sequence_info/esm1v/{seq_id}.npy`.
+- `TurNup` stores ESM-1b embeddings in `media/sequence_info/esm1b_turnup/{seq_id}.npy`.
+
+If your method needs ProtT5/ESM2/ESMC/Pseq2Sites, reuse the existing model env and cache directories above. Do not create a parallel duplicate cache for the same embedding.
+
+### 4.4 If you need a new embedding model
+
+1. Add a new env in `Dockerfile` (or reuse an existing one if possible).
+2. Add a Python path key in `config_docker.py` and `config_local.py`.
+3. Add an entry in `api/embeddings/registry.py`.
+4. Choose one stable cache directory under `media/sequence_info/<your_embedding_name>/...` and save by `seq_id`.
+5. List the embedding key in your method descriptor `embeddings_used`.
+
+If the embedding is not yet installed platform-wide, set `implemented: False` in `api/embeddings/registry.py` until its env is added.
 
 ## 5. Test Your Integration End-to-End
 
