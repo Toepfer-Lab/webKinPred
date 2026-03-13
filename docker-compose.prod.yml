@@ -55,6 +55,7 @@ services:
       - ./media:/app/media
       - ./db.sqlite3:/app/db.sqlite3
       - ./staticfiles:/app/staticfiles
+      - ./fastas/dbs:/app/fastas/dbs:ro
     environment:
       <<: *common-env
     depends_on:

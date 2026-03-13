@@ -146,6 +146,13 @@ export default function useJobSubmission() {
       if (!evt?.data) return;
       setLiveLogs((prev) => [...prev, evt.data]);
     };
+    es.addEventListener('done', () => {
+      // Server signals the session is complete — close immediately so the
+      // browser does not auto-reconnect and replay the log list again.
+      es.close();
+      eventSourceRef.current = null;
+      setStreamConnected(false);
+    });
     es.onerror = () => {
       setStreamConnected(false);
     };

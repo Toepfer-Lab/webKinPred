@@ -102,6 +102,9 @@ def sse_generator(session_id: str, keepalive_secs: int = 15):
 
         if finished:
             print(f"[sse_generator] __FINISHED__ for {channel}. Closing stream.")
+            # Named 'done' event tells the client to close the EventSource
+            # immediately, preventing auto-reconnect loops.
+            yield "event: done\ndata: finished\n\n"
             break
 
         # Wait for a wakeup signal (new data or __FINISHED__) or send a keepalive.
