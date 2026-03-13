@@ -7,6 +7,8 @@ docker-compose.override.yml
 # Runtime artifacts (keep out of repo/root)
 db.sqlite3
 celerybeat-schedule
+keys
+llen
 media/
 staticfiles/
 mmseqs_tmp/
