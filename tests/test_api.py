@@ -43,6 +43,16 @@ def sel(methods: set, *names: str) -> bool:
     return any(n.lower() in methods for n in names)
 
 
+def selected_kcat_methods(methods: set) -> list[str]:
+    """Return selected kcat-capable methods in canonical order."""
+    return [m for m in KCAT_METHOD_IDS if m.lower() in methods]
+
+
+def selected_km_methods(methods: set) -> list[str]:
+    """Return selected Km-capable methods in canonical order."""
+    return [m for m in KM_METHOD_IDS if m.lower() in methods]
+
+
 # ---------------------------------------------------------------------------
 # Tiny inline CSV fixtures
 # ---------------------------------------------------------------------------
@@ -207,79 +217,86 @@ def test_quota(base: str, headers: dict) -> None:
           j.get("remaining") == j.get("limit", 0) - j.get("used", 0))
 
 
-def test_submit_success(base: str, headers: dict, methods: set) -> dict | None:
+def build_selected_method_jobs(methods: set) -> list[dict]:
     """
-    Submit a valid job using the first available kcat method from *methods*.
-    Returns the job dict so later tests can poll its status and attempt to
-    download its result.  Returns None if no kcat method is selected.
+    Build one submit job per selected method/prediction type:
+      - all selected kcat-capable methods as predictionType=kcat
+      - all selected Km-capable methods as predictionType=Km
     """
-    # Pick the first kcat method that the user asked to test.
-    kcat_method = next(
-        (m for m in KCAT_METHOD_IDS if m.lower() in methods), None
-    )
-    if kcat_method is None:
-        print("\n  (skipping submit/status/result tests — no kcat method selected)")
-        return None
-
-    # TurNup requires a different CSV format; fall back if it's the only option.
-    csv_content = MULTI_SUBSTRATE_CSV if kcat_method == "TurNup" else SINGLE_SUBSTRATE_CSV
-
-    section(f"POST /submit/ — valid CSV file upload (kcat / {kcat_method})")
-    r = submit(base, headers, csv_content, "kcat", kcat_method=kcat_method)
-    check("status 201",          r.status_code == 201, f"got {r.status_code}")
-    j = r.json()
-    check("has jobId",           "jobId"     in j)
-    check("status=Pending",      j.get("status") == "Pending")
-    check("has statusUrl",       "statusUrl" in j)
-    check("has resultUrl",       "resultUrl" in j)
-    check("has quota",           "quota"     in j)
-    q = j.get("quota", {})
-    check("quota has remaining", "remaining" in q)
-    check("quota has limit",     "limit"     in q)
-    remaining = q.get('remaining', '?')
-    rem_str = f"{remaining:,}" if isinstance(remaining, int) else str(remaining)
-    print(f"         → Job ID: {j.get('jobId')}  |  Method: {kcat_method}  |  Quota remaining: {rem_str}")
-    return j
+    jobs: list[dict] = []
+    for kcat_method in selected_kcat_methods(methods):
+        jobs.append({
+            "prediction_type": "kcat",
+            "kcat_method": kcat_method,
+            "km_method": None,
+            "csv_content": MULTI_SUBSTRATE_CSV if kcat_method == "TurNup" else SINGLE_SUBSTRATE_CSV,
+            "label": f"kcat/{kcat_method}",
+        })
+    for km_method in selected_km_methods(methods):
+        jobs.append({
+            "prediction_type": "Km",
+            "kcat_method": None,
+            "km_method": km_method,
+            "csv_content": SINGLE_SUBSTRATE_CSV,
+            "label": f"Km/{km_method}",
+        })
+    return jobs
 
 
-def test_submit_km(base: str, headers: dict, methods: set) -> None:
-    # Pick the first Km method that the user asked to test.
-    km_method = next(
-        (m for m in KM_METHOD_IDS if m.lower() in methods), None
-    )
-    if km_method is None:
-        print("\n  (skipping Km submit test — no Km-capable method selected)")
-        return
-    section(f"POST /submit/ — valid CSV file upload (Km / {km_method})")
-    r = submit(base, headers, SINGLE_SUBSTRATE_CSV, "Km", km_method=km_method)
-    check("status 201",     r.status_code == 201, f"got {r.status_code}")
-    check("has jobId",      "jobId" in r.json())
+def test_submit_selected_methods(base: str, headers: dict, methods: set) -> list[dict]:
+    """
+    Submit one job for every selected method/prediction type combination.
+    Returns a list of tracked submitted jobs for later polling/result checks.
+    """
+    specs = build_selected_method_jobs(methods)
+    if not specs:
+        print("\n  (skipping method submits — no supported methods selected)")
+        return []
+
+    section("POST /submit/ — valid CSV upload for every selected method")
+    submitted_jobs: list[dict] = []
+    for spec in specs:
+        label = spec["label"]
+        r = submit(
+            base,
+            headers,
+            spec["csv_content"],
+            spec["prediction_type"],
+            kcat_method=spec["kcat_method"],
+            km_method=spec["km_method"],
+        )
+        ok = check(f"[{label}] status 201", r.status_code == 201, f"got {r.status_code}")
+        if not ok:
+            continue
+        j = r.json()
+        check(f"[{label}] has jobId", "jobId" in j)
+        check(f"[{label}] status=Pending", j.get("status") == "Pending")
+        check(f"[{label}] has statusUrl", "statusUrl" in j)
+        check(f"[{label}] has resultUrl", "resultUrl" in j)
+        check(f"[{label}] has quota", "quota" in j)
+        q = j.get("quota", {})
+        check(f"[{label}] quota has remaining", "remaining" in q)
+        check(f"[{label}] quota has limit", "limit" in q)
+        if "jobId" not in j:
+            continue
+        submitted = {**spec, "job": j, "job_id": j["jobId"]}
+        submitted_jobs.append(submitted)
+        print(f"         → Submitted {label}: jobId={j['jobId']}")
+    return submitted_jobs
 
 
 def test_submit_both(base: str, headers: dict, methods: set) -> None:
-    kcat_method = next(
-        (m for m in KCAT_METHOD_IDS if m.lower() in methods), None
-    )
-    km_method = next(
-        (m for m in KM_METHOD_IDS if m.lower() in methods), None
-    )
-    if kcat_method is None or km_method is None:
+    kcat_methods = selected_kcat_methods(methods)
+    km_methods = selected_km_methods(methods)
+    if not kcat_methods or not km_methods:
         print("\n  (skipping 'both' submit test — need at least one kcat and one Km method selected)")
         return
+    kcat_method = kcat_methods[0]
+    km_method = km_methods[0]
     section(f"POST /submit/ — valid CSV file upload (both / {kcat_method} + {km_method})")
     csv_content = MULTI_SUBSTRATE_CSV if kcat_method == "TurNup" else SINGLE_SUBSTRATE_CSV
     r = submit(base, headers, csv_content, "both",
                kcat_method=kcat_method, km_method=km_method)
-    check("status 201",     r.status_code == 201, f"got {r.status_code}")
-    check("has jobId",      "jobId" in r.json())
-
-
-def test_submit_turnup(base: str, headers: dict, methods: set) -> None:
-    if not sel(methods, "TurNup"):
-        print("\n  (skipping TurNup submit test — not in selected methods)")
-        return
-    section("POST /submit/ — multi-substrate CSV (kcat / TurNup)")
-    r = submit(base, headers, MULTI_SUBSTRATE_CSV, "kcat", kcat_method="TurNup")
     check("status 201",     r.status_code == 201, f"got {r.status_code}")
     check("has jobId",      "jobId" in r.json())
 
@@ -391,26 +408,28 @@ def test_submit_errors(base: str, headers: dict) -> None:
     check("10001-row JSON body → 400",  r.status_code == 400, f"got {r.status_code}")
 
 
-def test_status(base: str, headers: dict, job: dict | None) -> None:
-    if job is None:
+def test_status(base: str, headers: dict, submitted_jobs: list[dict]) -> None:
+    if not submitted_jobs:
         return
     section("GET /status/<jobId>/ — job status polling")
-    job_id = job["jobId"]
+    sample = submitted_jobs[0]
+    job_id = sample["job_id"]
+    label = sample["label"]
 
     # Valid status request
     r = requests.get(f"{base}/status/{job_id}/", headers=headers)
-    check("status 200",            r.status_code == 200, f"got {r.status_code}")
+    check(f"[{label}] status 200",            r.status_code == 200, f"got {r.status_code}")
     j = r.json()
-    check("jobId matches",         j.get("jobId") == job_id)
-    check("status field present",  "status" in j)
-    check("status is known value",
+    check(f"[{label}] jobId matches",         j.get("jobId") == job_id)
+    check(f"[{label}] status field present",  "status" in j)
+    check(f"[{label}] status is known value",
           j.get("status") in {"Pending", "Processing", "Completed", "Failed"})
-    check("submittedAt present",   "submittedAt" in j)
-    check("elapsedSeconds ≥ 0",    j.get("elapsedSeconds", -1) >= 0)
-    check("progress present",      "progress" in j)
+    check(f"[{label}] submittedAt present",   "submittedAt" in j)
+    check(f"[{label}] elapsedSeconds ≥ 0",    j.get("elapsedSeconds", -1) >= 0)
+    check(f"[{label}] progress present",      "progress" in j)
     prog = j.get("progress", {})
-    check("progress.moleculesTotal",    "moleculesTotal"    in prog)
-    check("progress.predictionsTotal",  "predictionsTotal"  in prog)
+    check(f"[{label}] progress.moleculesTotal",    "moleculesTotal"    in prog)
+    check(f"[{label}] progress.predictionsTotal",  "predictionsTotal"  in prog)
 
     # Non-existent job
     r = requests.get(f"{base}/status/NOTAREALIDXXX/", headers=headers)
@@ -418,116 +437,119 @@ def test_status(base: str, headers: dict, job: dict | None) -> None:
     check("error key present",     "error" in r.json())
 
 
-def test_result_not_ready(base: str, headers: dict, job: dict | None) -> None:
-    if job is None:
+def test_result_not_ready(base: str, headers: dict, submitted_jobs: list[dict]) -> None:
+    if not submitted_jobs:
         return
     """
     Unless the job completed instantly (unlikely in tests), result should
     return 409 Conflict because the job is still Pending/Processing.
     """
     section("GET /result/<jobId>/ — result before job completes")
-    job_id = job["jobId"]
+    sample = submitted_jobs[0]
+    job_id = sample["job_id"]
+    label = sample["label"]
 
     r = requests.get(f"{base}/result/{job_id}/", headers=headers)
     # The job might have completed if a worker picked it up; handle both cases.
     if r.status_code == 200:
-        check("result available (job already done)",  True)
+        check(f"[{label}] result available (job already done)",  True)
     else:
-        check("pending job → 409",  r.status_code == 409, f"got {r.status_code}")
-        check("error key present",  "error" in r.json())
+        check(f"[{label}] pending job → 409",  r.status_code == 409, f"got {r.status_code}")
+        check(f"[{label}] error key present",  "error" in r.json())
 
     # Non-existent job
     r = requests.get(f"{base}/result/NOTAREALIDXXX/", headers=headers)
     check("fake jobId → 404",  r.status_code == 404, f"got {r.status_code}")
 
 
-def test_result_completed(base: str, headers: dict, job: dict | None,
-                          poll_timeout: int = 1000) -> None:
-    """
-    Poll the job submitted by test_submit_success until it completes, then
-    download its results in both CSV and JSON formats.
-
-    Falls back to a local DB lookup only when running against localhost and
-    no submitted job is available (e.g. worker not running).
-    poll_timeout — seconds to wait for the job to finish (default 1000 s / 16.67 min).
-    """
-    section("GET /result/<jobId>/ — downloading a completed job")
-
-    job_id: str | None = job.get("jobId") if job else None
-
-    if job_id:
-        # Poll the status endpoint until the job is done (or we time out).
-        print(f"         → Polling job {job_id} until completion "
-              f"(timeout {poll_timeout}s)…")
-        deadline = time.time() + poll_timeout
-        interval = 5
-        while time.time() < deadline:
-            r = requests.get(f"{base}/status/{job_id}/", headers=headers)
-            if r.status_code != 200:
-                break
-            status = r.json().get("status", "")
-            if status in ("Completed", "Failed"):
-                break
-            time.sleep(interval)
-            interval = min(interval * 1.5, 30)  # back off up to 30 s
-        else:
-            print(f"         (skipped — job did not complete within {poll_timeout}s)")
-            return
-
-        # Re-check final status
+def wait_for_terminal_status(
+    base: str,
+    headers: dict,
+    job_id: str,
+    label: str,
+    poll_timeout: int,
+) -> str | None:
+    """Poll /status/<jobId>/ until Completed/Failed, or return None on error/timeout."""
+    print(f"         → Polling [{label}] job {job_id} until completion (timeout {poll_timeout}s)…")
+    deadline = time.time() + poll_timeout
+    interval = 5.0
+    last_status = "Unknown"
+    while time.time() < deadline:
         r = requests.get(f"{base}/status/{job_id}/", headers=headers)
-        if r.status_code == 200 and r.json().get("status") == "Failed":
-            check("job completed successfully (not Failed)", False,
-                  f"job {job_id} ended in Failed state")
-            return
-        if r.status_code != 200 or r.json().get("status") != "Completed":
-            print(f"         (skipped — job {job_id} not yet completed; "
-                  f"status={r.json().get('status', '?')})")
-            return
+        if r.status_code != 200:
+            check(f"[{label}] status polling HTTP 200", False, f"got {r.status_code}")
+            return None
+        j = r.json()
+        last_status = str(j.get("status", "Unknown"))
+        if last_status in ("Completed", "Failed"):
+            return last_status
+        time.sleep(interval)
+        interval = min(interval * 1.5, 30.0)  # back off up to 30 s
 
-        print(f"         → Job {job_id} completed — downloading result")
-    else:
-        # No submitted job available — attempt a local DB fallback (dev only).
-        import os as _os
-        import sys as _sys
-        _sys.path.insert(0, "/home/saleh/webKinPred")
-        _os.environ.setdefault("DJANGO_SETTINGS_MODULE", "webKinPred.settings")
-        try:
-            import django
-            django.setup()
-            from api.models import Job as _Job
-            completed = _Job.objects.filter(
-                status="Completed", output_file__isnull=False
-            ).exclude(output_file="").order_by("-completion_time").first()
-        except Exception as e:
-            print(f"         (skipped — no submitted job and could not query DB: {e})")
-            return
-        if not completed:
-            print("         (skipped — no completed jobs in the database)")
-            return
-        job_id = completed.public_id
-        print(f"         → Using DB-found completed job: {job_id}")
+    check(
+        f"[{label}] completed within timeout",
+        False,
+        f"timed out after {poll_timeout}s (last status={last_status})",
+    )
+    return None
 
+
+def validate_completed_result(base: str, headers: dict, job_id: str, label: str) -> None:
+    """Validate CSV and JSON result downloads for a completed job."""
     # CSV download
     r = requests.get(f"{base}/result/{job_id}/", headers=headers)
-    check("CSV status 200",           r.status_code == 200, f"got {r.status_code}")
-    check("content-type is text/csv",
-          "text/csv" in r.headers.get("Content-Type", ""),
-          r.headers.get("Content-Type"))
-    check("non-empty body",           len(r.content) > 0)
+    check(f"[{label}] CSV status 200", r.status_code == 200, f"got {r.status_code}")
+    check(
+        f"[{label}] content-type is text/csv",
+        "text/csv" in r.headers.get("Content-Type", ""),
+        r.headers.get("Content-Type"),
+    )
+    check(f"[{label}] non-empty body", len(r.content) > 0)
 
     # JSON format
     r = requests.get(f"{base}/result/{job_id}/?format=json", headers=headers)
-    check("JSON status 200",          r.status_code == 200, f"got {r.status_code}")
+    check(f"[{label}] JSON status 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
     j = r.json()
-    check("JSON has jobId",           j.get("jobId") == job_id)
-    check("JSON has columns list",    isinstance(j.get("columns"), list))
-    check("JSON has rowCount",        isinstance(j.get("rowCount"), int))
-    check("JSON has data list",       isinstance(j.get("data"), list))
-    check("rowCount matches data",    j.get("rowCount") == len(j.get("data", [])))
+    check(f"[{label}] JSON has jobId", j.get("jobId") == job_id)
+    check(f"[{label}] JSON has columns list", isinstance(j.get("columns"), list))
+    check(f"[{label}] JSON has rowCount", isinstance(j.get("rowCount"), int))
+    check(f"[{label}] JSON has data list", isinstance(j.get("data"), list))
+    check(f"[{label}] rowCount matches data", j.get("rowCount") == len(j.get("data", [])))
+
     if j.get("data"):
         first_row = j["data"][0]
-        check("row has Protein Sequence", "Protein Sequence" in first_row)
+        check(f"[{label}] row has Protein Sequence", "Protein Sequence" in first_row)
+        if label.startswith("kcat/TurNup"):
+            check(f"[{label}] row has Substrates", "Substrates" in first_row)
+            check(f"[{label}] row has Products", "Products" in first_row)
+        else:
+            check(f"[{label}] row has Substrate", "Substrate" in first_row)
+
+
+def test_result_completed(base: str, headers: dict, submitted_jobs: list[dict],
+                          poll_timeout: int = 1000) -> None:
+    """
+    Poll every submitted method job until it reaches a terminal state, then
+    validate its result in CSV and JSON formats.
+
+    poll_timeout — seconds to wait per job (default 1000 s / 16.67 min).
+    """
+    if not submitted_jobs:
+        return
+
+    section("GET /result/<jobId>/ — downloading completed results for all selected methods")
+    for submitted in submitted_jobs:
+        job_id = submitted["job_id"]
+        label = submitted["label"]
+        final_status = wait_for_terminal_status(base, headers, job_id, label, poll_timeout)
+        if final_status is None:
+            continue
+        check(f"[{label}] final status is Completed", final_status == "Completed", f"got {final_status}")
+        if final_status != "Completed":
+            continue
+        validate_completed_result(base, headers, job_id, label)
 
 
 def test_validate(base: str, headers: dict) -> None:
@@ -707,8 +729,8 @@ def main():
     parser.add_argument("--skip-similarity", action="store_true",
                         help="Skip the slow runSimilarity=true test (requires MMseqs2)")
     parser.add_argument("--poll-timeout", type=int, default=1000, metavar="SECONDS",
-                        help="Seconds to wait for a submitted job to complete before "
-                             "skipping the result-download test (default: 1000)")
+                        help="Seconds to wait per submitted method job before marking "
+                             "that job as failed (default: 1000)")
     parser.add_argument(
         "--methods",
         default="all",
@@ -750,26 +772,24 @@ def main():
     test_auth(base, key)
     test_quota(base, headers)
 
-    # Submit a real job — we'll use its ID for status / result tests
-    job = test_submit_success(base, headers, methods)
+    # Submit one job for each selected method/prediction type.
+    submitted_jobs = test_submit_selected_methods(base, headers, methods)
 
     # Other valid submission variants
-    test_submit_km(base, headers, methods)
     test_submit_both(base, headers, methods)
-    test_submit_turnup(base, headers, methods)
     test_submit_json_body(base, headers, methods)
 
     # All the ways submission can fail
     test_submit_errors(base, headers)
 
     # Status polling
-    test_status(base, headers, job)
+    test_status(base, headers, submitted_jobs)
 
     # Result endpoint (job not done yet)
-    test_result_not_ready(base, headers, job)
+    test_result_not_ready(base, headers, submitted_jobs)
 
-    # Result endpoint (poll the submitted job until done, then download)
-    test_result_completed(base, headers, job, poll_timeout=args.poll_timeout)
+    # Result endpoint (poll every submitted method job until done, then download)
+    test_result_completed(base, headers, submitted_jobs, poll_timeout=args.poll_timeout)
 
     # Validate endpoint — fast checks (no similarity)
     test_validate(base, headers)
