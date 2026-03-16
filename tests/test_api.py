@@ -285,29 +285,45 @@ def test_submit_selected_methods(base: str, headers: dict, methods: set) -> list
     return submitted_jobs
 
 
-def test_submit_both(base: str, headers: dict, methods: set) -> None:
+def test_submit_both(base: str, headers: dict, methods: set) -> dict | None:
     kcat_methods = selected_kcat_methods(methods)
     km_methods = selected_km_methods(methods)
     if not kcat_methods or not km_methods:
         print("\n  (skipping 'both' submit test — need at least one kcat and one Km method selected)")
-        return
+        return None
     kcat_method = kcat_methods[0]
     km_method = km_methods[0]
+    label = f"both/{kcat_method}+{km_method}"
     section(f"POST /submit/ — valid CSV file upload (both / {kcat_method} + {km_method})")
     csv_content = MULTI_SUBSTRATE_CSV if kcat_method == "TurNup" else SINGLE_SUBSTRATE_CSV
     r = submit(base, headers, csv_content, "both",
                kcat_method=kcat_method, km_method=km_method)
-    check("status 201",     r.status_code == 201, f"got {r.status_code}")
-    check("has jobId",      "jobId" in r.json())
+    if not check(f"[{label}] status 201", r.status_code == 201, f"got {r.status_code}"):
+        return None
+    j = r.json()
+    check(f"[{label}] has jobId", "jobId" in j)
+    check(f"[{label}] status=Pending", j.get("status") == "Pending")
+    if "jobId" not in j:
+        return None
+    print(f"         → Submitted {label}: jobId={j['jobId']}")
+    return {
+        "prediction_type": "both",
+        "kcat_method": kcat_method,
+        "km_method": km_method,
+        "label": label,
+        "job": j,
+        "job_id": j["jobId"],
+    }
 
 
-def test_submit_json_body(base: str, headers: dict, methods: set) -> None:
+def test_submit_json_body(base: str, headers: dict, methods: set) -> dict | None:
     kcat_method = next(
         (m for m in KCAT_METHOD_IDS if m.lower() in methods and m != "TurNup"), None
     )  # TurNup needs multi-substrate format; pick any other kcat method
     if kcat_method is None:
         print("\n  (skipping JSON body submit test — no non-TurNup kcat method selected)")
-        return
+        return None
+    label = f"json/kcat/{kcat_method}"
     section(f"POST /submit/ — JSON body (inline data, no CSV file) [{kcat_method}]")
     json_headers = {**headers, "Content-Type": "application/json"}
     payload = {
@@ -339,10 +355,22 @@ def test_submit_json_body(base: str, headers: dict, methods: set) -> None:
         ],
     }
     r = requests.post(f"{base}/submit/", headers=json_headers, json=payload)
-    check("status 201",     r.status_code == 201, f"got {r.status_code}")
+    if not check(f"[{label}] status 201", r.status_code == 201, f"got {r.status_code}"):
+        return None
     j = r.json()
-    check("has jobId",      "jobId"  in j)
-    check("status=Pending", j.get("status") == "Pending")
+    check(f"[{label}] has jobId", "jobId" in j)
+    check(f"[{label}] status=Pending", j.get("status") == "Pending")
+    if "jobId" not in j:
+        return None
+    print(f"         → Submitted {label}: jobId={j['jobId']}")
+    return {
+        "prediction_type": "kcat",
+        "kcat_method": kcat_method,
+        "km_method": None,
+        "label": label,
+        "job": j,
+        "job_id": j["jobId"],
+    }
 
 
 def test_submit_errors(base: str, headers: dict) -> None:
@@ -521,7 +549,7 @@ def validate_completed_result(base: str, headers: dict, job_id: str, label: str)
     if j.get("data"):
         first_row = j["data"][0]
         check(f"[{label}] row has Protein Sequence", "Protein Sequence" in first_row)
-        if label.startswith("kcat/TurNup"):
+        if "TurNup" in label:
             check(f"[{label}] row has Substrates", "Substrates" in first_row)
             check(f"[{label}] row has Products", "Products" in first_row)
         else:
@@ -732,6 +760,15 @@ def main():
                         help="Seconds to wait per submitted method job before marking "
                              "that job as failed (default: 1000)")
     parser.add_argument(
+        "--extra-submit-variants",
+        action="store_true",
+        help=(
+            "Also submit additional success-path variants (predictionType=both "
+            "and JSON-body submit). These jobs are fully waited/validated too. "
+            "Default is off for faster runs."
+        ),
+    )
+    parser.add_argument(
         "--methods",
         default="all",
         metavar="METHOD[,METHOD…]",
@@ -764,6 +801,7 @@ def main():
     print(f"  Base URL : {base}")
     print(f"  API Key  : {key[:15]}…")
     print(f"  Methods  : {', '.join(sorted(methods))}")
+    print(f"  Variants : {'extra' if args.extra_submit_variants else 'minimal'}")
     print("=" * 70)
 
     # Run all test groups
@@ -775,9 +813,17 @@ def main():
     # Submit one job for each selected method/prediction type.
     submitted_jobs = test_submit_selected_methods(base, headers, methods)
 
-    # Other valid submission variants
-    test_submit_both(base, headers, methods)
-    test_submit_json_body(base, headers, methods)
+    # Optional success-path submission variants. If enabled, their jobs are
+    # included in full end-to-end status/result validation.
+    if args.extra_submit_variants:
+        both_job = test_submit_both(base, headers, methods)
+        if both_job:
+            submitted_jobs.append(both_job)
+        json_job = test_submit_json_body(base, headers, methods)
+        if json_job:
+            submitted_jobs.append(json_job)
+    else:
+        print("\n  (skipping extra submit variants — pass --extra-submit-variants to run them)")
 
     # All the ways submission can fail
     test_submit_errors(base, headers)
