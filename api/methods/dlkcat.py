@@ -3,7 +3,13 @@
 # Method descriptor for DLKcat.
 
 from api.methods.base import MethodDescriptor
-from api.prediction_engines.dlkcat import dlkcat_predictions
+
+
+def _dlkcat_predictions_lazy(*args, **kwargs):
+    # Import prediction engine only when a job is actually executed.
+    from api.prediction_engines.dlkcat import dlkcat_predictions
+
+    return dlkcat_predictions(*args, **kwargs)
 
 descriptor = MethodDescriptor(
     key="DLKcat",
@@ -43,7 +49,7 @@ descriptor = MethodDescriptor(
         "kcat": {},
     },
 
-    pred_func=dlkcat_predictions,
+    pred_func=_dlkcat_predictions_lazy,
 
     # ── Embeddings ────────────────────────────────────────────────────────────
     # DLKcat uses its own graph neural network for substrate representation

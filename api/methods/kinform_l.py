@@ -3,7 +3,13 @@
 # Method descriptor for KinForm-L (low sequence-similarity variant).
 
 from api.methods.base import MethodDescriptor
-from api.prediction_engines.kinform import kinform_predictions
+
+
+def _kinform_predictions_lazy(*args, **kwargs):
+    # Import prediction engine only when a job is actually executed.
+    from api.prediction_engines.kinform import kinform_predictions
+
+    return kinform_predictions(*args, **kwargs)
 
 descriptor = MethodDescriptor(
     key="KinForm-L",
@@ -38,7 +44,7 @@ descriptor = MethodDescriptor(
         "kcat": {"kinetics_type": "KCAT", "model_variant": "L"},
     },
 
-    pred_func=kinform_predictions,
+    pred_func=_kinform_predictions_lazy,
 
     # ── Embeddings ────────────────────────────────────────────────────────────
     embeddings_used=["esm2", "esmc", "prot_t5", "pseq2sites"],

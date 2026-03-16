@@ -3,7 +3,13 @@
 # Method descriptor for UniKP.
 
 from api.methods.base import MethodDescriptor
-from api.prediction_engines.unikp import unikp_predictions
+
+
+def _unikp_predictions_lazy(*args, **kwargs):
+    # Import prediction engine only when a job is actually executed.
+    from api.prediction_engines.unikp import unikp_predictions
+
+    return unikp_predictions(*args, **kwargs)
 
 descriptor = MethodDescriptor(
     key="UniKP",
@@ -46,7 +52,7 @@ descriptor = MethodDescriptor(
         "Km":   {"kinetics_type": "KM"},
     },
 
-    pred_func=unikp_predictions,
+    pred_func=_unikp_predictions_lazy,
 
     # ── Embeddings ────────────────────────────────────────────────────────────
     # UniKP uses ProtT5-XL-UniRef50 for protein representation internally.

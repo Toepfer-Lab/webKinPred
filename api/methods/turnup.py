@@ -3,7 +3,13 @@
 # Method descriptor for TurNup.
 
 from api.methods.base import MethodDescriptor
-from api.prediction_engines.turnup import turnup_predictions
+
+
+def _turnup_predictions_lazy(*args, **kwargs):
+    # Import prediction engine only when a job is actually executed.
+    from api.prediction_engines.turnup import turnup_predictions
+
+    return turnup_predictions(*args, **kwargs)
 
 descriptor = MethodDescriptor(
     key="TurNup",
@@ -48,7 +54,7 @@ descriptor = MethodDescriptor(
         "kcat": {},
     },
 
-    pred_func=turnup_predictions,
+    pred_func=_turnup_predictions_lazy,
 
     # ── Embeddings ────────────────────────────────────────────────────────────
     # TurNup uses ESM-1v for protein embeddings and reaction fingerprints

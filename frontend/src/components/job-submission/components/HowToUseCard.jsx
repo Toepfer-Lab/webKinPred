@@ -1,19 +1,12 @@
 // src/components/HowToUseCard.js
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Card, Row, Col, Alert, ListGroup, Button, Badge } from 'react-bootstrap';
 import { BoxArrowInDown, Bullseye, CloudUpload, Cpu, Github } from 'react-bootstrap-icons';
 import '../../../styles/components/HowToUseCard.css';
-import { fetchMethods } from '../services/api';
 
 
-export default function HowToUseCard() {
-  const [methods, setMethods] = useState({});
-
-  useEffect(() => {
-    fetchMethods().then(setMethods).catch(() => {});
-  }, []);
-
+export default function HowToUseCard({ methods = {} }) {
   return (
     <Card className="section-container how-to-use-card mb-4">
       <Card.Header as="h3" className="text-center">

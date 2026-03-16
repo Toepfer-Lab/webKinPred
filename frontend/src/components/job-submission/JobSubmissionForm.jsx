@@ -19,7 +19,7 @@ export default function JobSubmissionForm() {
     <Container className="mt-5 pb-5">
       <Row className="justify-content-center">
         <Col md={10}>
-          <HowToUseCard />
+          <HowToUseCard methods={state.methods || {}} />
 
           <PredictionTypeSelect
             value={state.predictionType}

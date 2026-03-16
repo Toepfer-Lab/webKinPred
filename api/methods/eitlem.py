@@ -3,7 +3,13 @@
 # Method descriptor for EITLEM-Kinetics.
 
 from api.methods.base import MethodDescriptor
-from api.prediction_engines.eitlem import eitlem_predictions
+
+
+def _eitlem_predictions_lazy(*args, **kwargs):
+    # Import prediction engine only when a job is actually executed.
+    from api.prediction_engines.eitlem import eitlem_predictions
+
+    return eitlem_predictions(*args, **kwargs)
 
 descriptor = MethodDescriptor(
     key="EITLEM",
@@ -48,7 +54,7 @@ descriptor = MethodDescriptor(
         "Km":   {"kinetics_type": "KM"},
     },
 
-    pred_func=eitlem_predictions,
+    pred_func=_eitlem_predictions_lazy,
 
     # ── Embeddings ────────────────────────────────────────────────────────────
     # EITLEM uses ESM-1b for protein embeddings and RDKit Morgan fingerprints

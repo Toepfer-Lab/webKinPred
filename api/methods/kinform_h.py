@@ -3,7 +3,13 @@
 # Method descriptor for KinForm-H (high sequence-similarity variant).
 
 from api.methods.base import MethodDescriptor
-from api.prediction_engines.kinform import kinform_predictions
+
+
+def _kinform_predictions_lazy(*args, **kwargs):
+    # Import prediction engine only when a job is actually executed.
+    from api.prediction_engines.kinform import kinform_predictions
+
+    return kinform_predictions(*args, **kwargs)
 
 descriptor = MethodDescriptor(
     key="KinForm-H",
@@ -42,7 +48,7 @@ descriptor = MethodDescriptor(
         "Km":   {"kinetics_type": "KM",   "model_variant": "H"},
     },
 
-    pred_func=kinform_predictions,
+    pred_func=_kinform_predictions_lazy,
 
     # ── Embeddings ────────────────────────────────────────────────────────────
     # KinForm uses four protein embedding models that are all available in our
