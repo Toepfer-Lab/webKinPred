@@ -62,6 +62,15 @@ def resolve_seq_ids_via_cli(sequences):
 os.makedirs(ESM_EMB_DIR, exist_ok=True)
 
 
+def _torch_load_compat(path, map_location=None):
+    """Prefer weights-only loading when supported; keep legacy fallback."""
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError:
+        # torch<2.0 does not support weights_only
+        return torch.load(path, map_location=map_location)
+
+
 def load_esm_model():
     """Load ESM model once and return it."""
     # Determine model path based on environment variables
@@ -151,7 +160,7 @@ def main():
         eitlem_model = EitlemKmPredictor(167, 512, 1280, 10, 0.5, 10)
 
     eitlem_model.load_state_dict(
-        torch.load(modelPath[kinetics_type], map_location=torch.device("cpu"))
+        _torch_load_compat(modelPath[kinetics_type], map_location=torch.device("cpu"))
     )
     eitlem_model.eval()
 

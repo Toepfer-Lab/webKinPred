@@ -53,7 +53,7 @@ RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.s
 
 # ── Django / app-level dependencies ──────────────────────────────────────────
 COPY requirements.txt ./
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=webkinpred-pip-worker-py313,target=/root/.cache/pip,sharing=locked \
     pip install -r requirements.txt
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ── KinForm (H + L) ──────────────────────────────────────────────────────────
 COPY docker-requirements/kinform_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py312,target=/root/.cache/pip,sharing=locked \
     mamba create -n kinform_env python=3.12 -c conda-forge -y \
     && conda run -n kinform_env pip install -r docker-requirements/kinform_requirements.txt \
     && conda clean -afy
@@ -76,7 +76,7 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
 # ── DLKcat ────────────────────────────────────────────────────────────────────
 COPY docker-requirements/dlkcat_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py37,target=/root/.cache/pip,sharing=locked \
     mamba create -n dlkcat_env python=3.7.12 -c conda-forge -y \
     && mamba install -n dlkcat_env -c conda-forge --override-channels rdkit=2020.09.1 -y \
     && conda run -n dlkcat_env pip install -r docker-requirements/dlkcat_requirements.txt \
@@ -85,7 +85,7 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
 # ── EITLEM ────────────────────────────────────────────────────────────────────
 COPY docker-requirements/eitlem_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py310,target=/root/.cache/pip,sharing=locked \
     mamba create -n eitlem_env python=3.10.15 -c conda-forge -y \
     && conda run -n eitlem_env pip install -r docker-requirements/eitlem_requirements.txt \
     && conda clean -afy
@@ -93,7 +93,7 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
 # ── TurNup ────────────────────────────────────────────────────────────────────
 COPY docker-requirements/turnup_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py37,target=/root/.cache/pip,sharing=locked \
     mamba create -n turnup_env python=3.7 -c conda-forge -y \
     && mamba install -n turnup_env -c conda-forge py-xgboost=1.6.1 -y \
     && conda run -n turnup_env pip install -r docker-requirements/turnup_requirements.txt \
@@ -102,14 +102,14 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
 # ── UniKP ─────────────────────────────────────────────────────────────────────
 COPY docker-requirements/unikp_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py37,target=/root/.cache/pip,sharing=locked \
     mamba create -n unikp python=3.7.12 -c conda-forge -y \
     && conda run -n unikp pip install -r docker-requirements/unikp_requirements.txt \
     && conda run -n unikp pip install accelerate \
     && conda clean -afy
 
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py37,target=/root/.cache/pip,sharing=locked \
     mamba create -n pseq2sites python=3.7.12 -c conda-forge -y \
     && conda run -n pseq2sites pip install --prefer-binary \
         torch==1.7.1 numpy==1.20.0 transformers==4.30.2 sentencepiece==0.2.0 \
@@ -117,19 +117,19 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     && conda clean -afy
 
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py37,target=/root/.cache/pip,sharing=locked \
     mamba create -n esm python=3.7 -c conda-forge -y \
     && conda run -n esm pip install torch fair-esm pandas tqdm \
     && conda clean -afy
 
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py312,target=/root/.cache/pip,sharing=locked \
     mamba create -n esmc python=3.12 -c conda-forge -y \
     && conda run -n esmc pip install esm pandas tqdm \
     && conda clean -afy
 
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-worker-py39,target=/root/.cache/pip,sharing=locked \
     mamba create -n prot_t5 python=3.9 -c conda-forge -y \
     && conda run -n prot_t5 pip install \
         torch transformers sentencepiece pandas tqdm accelerate \

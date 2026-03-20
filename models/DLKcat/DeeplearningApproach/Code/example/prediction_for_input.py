@@ -34,6 +34,15 @@ edge_dict = model.load_pickle(f"{data_path}/input/edge_dict.pickle")
 word_dict = model.load_pickle(f"{data_path}/input/sequence_dict.pickle")
 
 
+def _torch_load_compat(path, map_location=None):
+    """Prefer weights-only loading when supported; keep legacy fallback."""
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError:
+        # torch<2.0 does not support weights_only
+        return torch.load(path, map_location=map_location)
+
+
 def split_sequence(sequence, ngram):
     sequence = "-" + sequence + "="
     # print(sequence)
@@ -233,7 +242,7 @@ def main():
         layer_output,
     ).to(device)
     Kcat_model.load_state_dict(
-        torch.load(
+        _torch_load_compat(
             f"{results_path}/output/all--radius2--ngram3--dim20--layer_gnn3--window11--layer_cnn3--layer_output3--lr1e-3--lr_decay0.5--decay_interval10--weight_decay1e-6--iteration50",
             map_location=device,
         )

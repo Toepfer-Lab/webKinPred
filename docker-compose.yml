@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
@@ -14,6 +12,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
+    image: webkinpred-web:latest
     ports:
       - "8000:8000"
     volumes:
@@ -21,7 +20,7 @@ services:
       - ./db.sqlite3:/app/db.sqlite3
       - ./manage.py:/app/manage.py
       - ./api:/app/api
-      - ./models:/app/models
+      - ./models:/app/models:ro
       - ./db_models:/app/db_models
       - ./webKinPred:/app/webKinPred
       - ./fastas:/app/fastas
@@ -77,7 +76,7 @@ services:
       - ./db.sqlite3:/app/db.sqlite3
       - ./manage.py:/app/manage.py
       - ./api:/app/api
-      - ./models:/app/models
+      - ./models:/app/models:ro
       - ./db_models:/app/db_models
       - ./webKinPred:/app/webKinPred
       - ./fastas:/app/fastas
@@ -104,15 +103,13 @@ services:
       - apparmor:unconfined
 
   celery-beat:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    image: webkinpred-web:latest
     volumes:
       - ./media:/app/media
       - ./db.sqlite3:/app/db.sqlite3
       - ./manage.py:/app/manage.py
       - ./api:/app/api
-      - ./models:/app/models
+      - ./models:/app/models:ro
       - ./db_models:/app/db_models
       - ./webKinPred:/app/webKinPred
       - ./fastas:/app/fastas

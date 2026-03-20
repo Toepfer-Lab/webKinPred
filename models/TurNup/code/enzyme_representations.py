@@ -32,6 +32,15 @@ aa = set("abcdefghiklmnpqrstxvwyzv".upper())
 os.makedirs(SEQ_VEC_DIR, exist_ok=True)
 
 
+def _torch_load_compat(path, map_location=None):
+    """Prefer weights-only loading when supported; keep legacy fallback."""
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except (TypeError, RuntimeError):
+        # torch<2.0 or checkpoints that require legacy loader
+        return torch.load(path, map_location=map_location)
+
+
 def resolve_seq_ids_via_cli(sequences):
     """Resolve IDs for all sequences in order (increments uses_count per occurrence)."""
     payload = "\n".join(sequences) + "\n"
@@ -61,9 +70,9 @@ def load_esm1b_model():
     """Load ESM1b model once and return model and batch_converter"""
     print("Loading ESM1b model...")
     model_location = join(data_dir, "saved_models", "ESM1b", "esm1b_t33_650M_UR50S.pt")
-    model_data = torch.load(model_location, map_location="cpu")
+    model_data = _torch_load_compat(model_location, map_location="cpu")
     regression_location = model_location[:-3] + "-contact-regression.pt"
-    regression_data = torch.load(regression_location, map_location="cpu")
+    regression_data = _torch_load_compat(regression_location, map_location="cpu")
     model, alphabet = esm.pretrained.load_model_and_alphabet_core(
         model_data, regression_data
     )
@@ -73,7 +82,7 @@ def load_esm1b_model():
     PATH = join(
         data_dir, "saved_models", "ESM1b", "model_ESM_binary_A100_epoch_1_new_split.pkl"
     )
-    model_dict = torch.load(PATH, map_location="cpu")
+    model_dict = _torch_load_compat(PATH, map_location="cpu")
     model_dict_V2 = {k.split("model.")[-1]: v for k, v in model_dict.items()}
     for key in [
         "module.fc1.weight",

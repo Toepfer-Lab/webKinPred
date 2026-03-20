@@ -33,7 +33,7 @@ RUN wget -q https://mmseqs.com/latest/mmseqs-linux-sse41.tar.gz -O /tmp/mmseqs.t
 
 # ── Python dependencies (cached until requirements.txt changes) ───────────────
 COPY requirements.txt ./
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=webkinpred-pip-web-py312,target=/root/.cache/pip,sharing=locked \
     pip install -r requirements.txt
 
 # ── Application code (only this layer + below rebuild on git pull) ────────────

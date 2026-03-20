@@ -190,10 +190,21 @@ def get_prot_t5_embeddings(
 
     # --------------------------- model load ------------------------------- #
     print("Loading ProtT5-XL UniRef50 ...")
-    tokenizer = T5Tokenizer.from_pretrained(PROTT5XL_MODEL_PATH, do_lower_case=False)
+    local_only = bool(os.environ.get("KINFORM_MEDIA_PATH"))
+    tokenizer = T5Tokenizer.from_pretrained(
+        PROTT5XL_MODEL_PATH,
+        do_lower_case=False,
+        local_files_only=local_only,
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.float16 if device.type == "cuda" else torch.float32
-    model = T5EncoderModel.from_pretrained(PROTT5XL_MODEL_PATH, dtype=dtype, low_cpu_mem_usage=True, output_hidden_states=True)
+    model = T5EncoderModel.from_pretrained(
+        PROTT5XL_MODEL_PATH,
+        dtype=dtype,
+        low_cpu_mem_usage=True,
+        output_hidden_states=True,
+        local_files_only=local_only,
+    )
     model.eval()
     model = model.to(device)
     print(f"Using device: {device}")
@@ -323,7 +334,12 @@ def _get_prot_t5_residue_multi_layer(
 
     # ── single model load ──────────────────────────────────────────────────
     print("Loading ProtT5-XL UniRef50 ...")
-    tokenizer = T5Tokenizer.from_pretrained(PROTT5XL_MODEL_PATH, do_lower_case=False)
+    local_only = bool(os.environ.get("KINFORM_MEDIA_PATH"))
+    tokenizer = T5Tokenizer.from_pretrained(
+        PROTT5XL_MODEL_PATH,
+        do_lower_case=False,
+        local_files_only=local_only,
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.float16 if device.type == "cuda" else torch.float32
     model = T5EncoderModel.from_pretrained(
@@ -331,6 +347,7 @@ def _get_prot_t5_residue_multi_layer(
         dtype=dtype,
         low_cpu_mem_usage=True,
         output_hidden_states=True,
+        local_files_only=local_only,
     )
     model.eval()
     model = model.to(device)

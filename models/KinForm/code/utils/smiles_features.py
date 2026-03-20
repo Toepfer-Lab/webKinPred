@@ -25,6 +25,17 @@ from scikit_mol.fingerprints import (
 from smiles_embeddings.smiles_transformer.build_vocab import WordVocab
 from smiles_embeddings.smiles_transformer.pretrain_trfm import TrfmSeq2seq
 from smiles_embeddings.smiles_transformer.split_util import split
+
+
+def _torch_load_compat(path, map_location=None):
+    """Prefer weights-only loading when supported; keep legacy fallback."""
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError:
+        # torch<2.0 does not support weights_only
+        return torch.load(path, map_location=map_location)
+
+
 def smiles_transformer(Smiles):
     pad_index = 0
     unk_index = 1
@@ -55,7 +66,7 @@ def smiles_transformer(Smiles):
     state_dict_path = Path(__file__).resolve().parent.parent / "smiles_embeddings" / "smiles_transformer" / "trfm_12_23000.pkl"
     # if cuda is available, device='cuda', else 'cpu'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    trfm.load_state_dict(torch.load(state_dict_path, map_location=device, weights_only=False))
+    trfm.load_state_dict(_torch_load_compat(state_dict_path, map_location=device))
     trfm.eval()
     x_split = [split(sm) for sm in Smiles]
     xid, xseg = get_array(x_split)

@@ -48,9 +48,20 @@ def load_smiles_model():
     """Load SMILES model once and return components."""
     vocab = WordVocab.load_vocab(VOCAB_PATH)
     trfm = TrfmSeq2seq(len(vocab), 256, len(vocab), 4)
-    trfm.load_state_dict(torch.load(TRFM_PATH, map_location=torch.device("cpu")))
+    trfm.load_state_dict(
+        _torch_load_compat(TRFM_PATH, map_location=torch.device("cpu"))
+    )
     trfm.eval()
     return vocab, trfm
+
+
+def _torch_load_compat(path, map_location=None):
+    """Prefer weights-only loading when supported; keep legacy fallback."""
+    try:
+        return torch.load(path, map_location=map_location, weights_only=True)
+    except TypeError:
+        # torch<2.0 does not support weights_only
+        return torch.load(path, map_location=map_location)
 
 
 def smiles_to_vec(Smiles, vocab, trfm):
@@ -96,7 +107,9 @@ def load_t5_model():
     try:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         tokenizer = T5Tokenizer.from_pretrained(
-            PROTT5XL_MODEL_PATH, do_lower_case=False
+            PROTT5XL_MODEL_PATH,
+            do_lower_case=False,
+            local_files_only=True,
         )
         model_kwargs = {"low_cpu_mem_usage": True}
         # float16 fails on CPU backends ("addmm_impl_cpu_ not implemented for 'Half'")
@@ -106,7 +119,11 @@ def load_t5_model():
         else:
             model_kwargs["torch_dtype"] = torch.float32
 
-        model = T5EncoderModel.from_pretrained(PROTT5XL_MODEL_PATH, **model_kwargs)
+        model = T5EncoderModel.from_pretrained(
+            PROTT5XL_MODEL_PATH,
+            local_files_only=True,
+            **model_kwargs,
+        )
         model = model.to(device).eval()
         print("T5 model loaded and moved to device.")
         return tokenizer, model, device
