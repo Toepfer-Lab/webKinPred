@@ -1,0 +1,6 @@
+# Requirements for catapro (Python 3.10)
+numpy
+pandas
+rdkit
+transformers
+torch==2.1 
