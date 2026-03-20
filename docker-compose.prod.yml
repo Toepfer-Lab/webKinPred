@@ -96,6 +96,7 @@ services:
       - ./models/UniKP-main/models:/app/models/UniKP-main/models:ro
       - ./models/DLKcat/DeeplearningApproach:/app/models/DLKcat/DeeplearningApproach:ro
       - ./models/KinForm/results/trained_models:/app/models/KinForm/results/trained_models:ro
+      - ./models/CataPro:/app/models/CataPro:ro
     environment:
       <<: *common-env
     depends_on:
