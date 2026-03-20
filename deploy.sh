@@ -30,9 +30,9 @@ esac
 
 echo "==> Building and starting services (compose: $COMPOSE_FILE) ..."
 DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
-  docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans "$@"
+  sudo docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans "$@"
 
 echo "==> Pruning dangling images to reclaim disk space ..."
-docker image prune -f
+sudo docker image prune -f
 
 echo "==> Done."
