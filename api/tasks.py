@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections import defaultdict
 
@@ -292,10 +293,14 @@ def _execute_prediction(
     full_preds: list = [""] * n_rows
     sources: list[str] = [""] * n_rows
     extra_info: list[str] = [""] * n_rows
-    invalid_global: list[int] = []
+
+    skipped_reasons: dict[int, str] = {
+        idx: "Sequence too long — row was excluded"
+        for idx in set(range(n_rows)) - set(valid_idx)
+    }
 
     if valid_idx:
-        pred_subset, invalid_subset = _invoke_method_prediction(
+        pred_subset, invalid_reasons = _invoke_method_prediction(
             desc=desc,
             sequences=sequences_proc,
             public_id=job.public_id,
@@ -305,7 +310,11 @@ def _execute_prediction(
         for global_i, pred in zip(valid_idx, pred_subset):
             full_preds[global_i] = pred if pred is not None else ""
             sources[global_i] = f"Prediction from {desc.display_name}"
-        invalid_global = _map_subset_invalid_indices(valid_idx, invalid_subset)
+        skipped_reasons.update(_map_subset_invalid_reasons(valid_idx, invalid_reasons))
+
+    for idx, reason in skipped_reasons.items():
+        sources[idx] = reason
+        full_preds[idx] = ""
 
     # ── 5. Apply experimental overwrites ──────────────────────────────────────
     exp_key = "km_value" if target == "Km" else "kcat_value"
@@ -334,11 +343,7 @@ def _execute_prediction(
     credit_back(job.ip_address, min(max(0, empty), int(job.requested_rows)))
 
     job.output_file.name = os.path.relpath(out_path, settings.MEDIA_ROOT)
-    job.error_message = (
-        f"Predictions could not be made for {len(invalid_global)} row(s): "
-        + ", ".join(map(str, invalid_global))
-        if invalid_global else ""
-    )
+    job.error_message = _build_skipped_message(skipped_reasons)
     job.save(update_fields=["output_file", "error_message"])
 
 
@@ -376,15 +381,18 @@ def _execute_both_prediction(
         global_i: pos for pos, global_i in enumerate(valid_idx)
     }
 
-    # Rows skipped by length handling are immediately invalid
-    invalid_indices: set[int] = set(range(n_rows)) - set(valid_idx)
+    # Rows skipped by length handling
+    skipped_reasons: dict[int, str] = {
+        idx: "Sequence too long — row was excluded"
+        for idx in set(range(n_rows)) - set(valid_idx)
+    }
 
     # ── 2. Initialise result arrays ───────────────────────────────────────────
     kcat_preds: list = [""] * n_rows
-    kcat_src: list[str] = [f"Prediction from {kcat_desc.display_name}"] * n_rows
+    kcat_src: list[str] = [""] * n_rows
     kcat_extra: list[str] = [""] * n_rows
     km_preds: list = [""] * n_rows
-    km_src: list[str] = [f"Prediction from {km_desc.display_name}"] * n_rows
+    km_src: list[str] = [""] * n_rows
     km_extra: list[str] = [""] * n_rows
 
     # ── 3. kcat predictions ───────────────────────────────────────────────────
@@ -403,7 +411,9 @@ def _execute_both_prediction(
         )
         for global_i, pred in zip(valid_idx, kcat_subset):
             kcat_preds[global_i] = pred if pred is not None else ""
-        invalid_indices.update(_map_subset_invalid_indices(valid_idx, kcat_bad))
+            if pred is not None:
+                kcat_src[global_i] = f"Prediction from {kcat_desc.display_name}"
+        skipped_reasons.update(_map_subset_invalid_reasons(valid_idx, kcat_bad))
 
     # ── 4. KM predictions ─────────────────────────────────────────────────────
     # Special-case bridge: when the submitted CSV is multi-substrate
@@ -452,8 +462,9 @@ def _execute_both_prediction(
             for global_i in valid_idx:
                 if global_i in km_map:
                     km_preds[global_i] = ";".join(km_map[global_i])
-            invalid_indices.update(
-                _map_subset_invalid_indices(aug_df["original_idx"].tolist(), km_bad)
+                    km_src[global_i] = f"Prediction from {km_desc.display_name}"
+            skipped_reasons.update(
+                _map_subset_invalid_reasons(aug_df["original_idx"].tolist(), km_bad)
             )
 
         else:
@@ -471,7 +482,15 @@ def _execute_both_prediction(
             )
             for global_i, pred in zip(valid_idx, km_subset):
                 km_preds[global_i] = pred if pred is not None else ""
-            invalid_indices.update(_map_subset_invalid_indices(valid_idx, km_bad))
+                if pred is not None:
+                    km_src[global_i] = f"Prediction from {km_desc.display_name}"
+            skipped_reasons.update(_map_subset_invalid_reasons(valid_idx, km_bad))
+
+    for idx, reason in skipped_reasons.items():
+        kcat_src[idx] = reason
+        kcat_preds[idx] = ""
+        km_src[idx] = reason
+        km_preds[idx] = ""
 
     # ── 5. Experimental overwrites ────────────────────────────────────────────
     for exp in experimental_results:
@@ -524,14 +543,9 @@ def _execute_both_prediction(
     if to_refund > 0:
         credit_back(job.ip_address, to_refund)
 
-    invalid_sorted = sorted(invalid_indices)
     Job.objects.filter(pk=job.pk).update(
         output_file=os.path.relpath(out_path, settings.MEDIA_ROOT),
-        error_message=(
-            f"Predictions could not be made for {len(invalid_sorted)} row(s): "
-            + ", ".join(map(str, invalid_sorted))
-            if invalid_sorted else ""
-        ),
+        error_message=_build_skipped_message(skipped_reasons),
     )
 
 
@@ -563,7 +577,10 @@ def _execute_multi_prediction(
     valid_idx_to_pos: dict[int, int] = {
         global_i: pos for pos, global_i in enumerate(valid_idx)
     }
-    invalid_indices: set[int] = set(range(n_rows)) - set(valid_idx)
+    skipped_reasons: dict[int, str] = {
+        idx: "Sequence too long — row was excluded"
+        for idx in set(range(n_rows)) - set(valid_idx)
+    }
 
     target_results: dict[str, dict] = {}
     for target in targets:
@@ -641,8 +658,8 @@ def _execute_multi_prediction(
                     results["preds"][global_i] = ";".join(pred_map[global_i])
                     results["sources"][global_i] = f"Prediction from {desc.display_name}"
 
-            invalid_indices.update(
-                _map_subset_invalid_indices(aug_df["original_idx"].tolist(), invalid_subset)
+            skipped_reasons.update(
+                _map_subset_invalid_reasons(aug_df["original_idx"].tolist(), invalid_subset)
             )
             continue
 
@@ -662,7 +679,7 @@ def _execute_multi_prediction(
         for global_i, pred in zip(valid_idx, pred_subset):
             results["preds"][global_i] = pred if pred is not None else ""
             results["sources"][global_i] = f"Prediction from {desc.display_name}"
-        invalid_indices.update(_map_subset_invalid_indices(valid_idx, invalid_subset))
+        skipped_reasons.update(_map_subset_invalid_reasons(valid_idx, invalid_subset))
 
     # Experimental overrides are only available for kcat and Km.
     for target, exp_key in (("kcat", "kcat_value"), ("Km", "km_value")):
@@ -696,6 +713,11 @@ def _execute_multi_prediction(
                 prev,
                 target_results[target]["desc"].display_name,
             )
+
+    for idx, reason in skipped_reasons.items():
+        for result in target_results.values():
+            result["sources"][idx] = reason
+            result["preds"][idx] = ""
 
     results_df = df.copy()
     preferred_cols: list[str] = []
@@ -732,14 +754,9 @@ def _execute_multi_prediction(
     if to_refund > 0:
         credit_back(job.ip_address, to_refund)
 
-    invalid_sorted = sorted(invalid_indices)
     Job.objects.filter(pk=job.pk).update(
         output_file=os.path.relpath(out_path, settings.MEDIA_ROOT),
-        error_message=(
-            f"Predictions could not be made for {len(invalid_sorted)} row(s): "
-            + ", ".join(map(str, invalid_sorted))
-            if invalid_sorted else ""
-        ),
+        error_message=_build_skipped_message(skipped_reasons),
     )
 
 
@@ -753,19 +770,23 @@ def _invoke_method_prediction(
     public_id: str,
     target: str,
     **call_kwargs,
-) -> tuple[list, list[int]]:
+) -> tuple[list, dict[int, str]]:
     """
     Invoke a method using either:
 
     1) a custom `pred_func` (legacy/current methods), or
     2) the built-in generic subprocess engine (recommended for new methods).
+
+    Always returns (predictions, invalid_reasons) where invalid_reasons maps
+    local indices (into sequences) to human-readable skip reasons.
     """
     if desc.pred_func is not None:
-        return desc.pred_func(
+        preds, invalid_list = desc.pred_func(
             sequences=sequences,
             public_id=public_id,
             **call_kwargs,
         )
+        return preds, {idx: "Prediction could not be made" for idx in (invalid_list or [])}
 
     if desc.subprocess is not None:
         return run_generic_subprocess_prediction(
@@ -781,23 +802,33 @@ def _invoke_method_prediction(
     )
 
 
-def _map_subset_invalid_indices(
+def _map_subset_invalid_reasons(
     global_indices: list[int],
-    invalid_subset: list[int] | None,
-) -> list[int]:
-    """Map local invalid indices returned by a method to original row indices."""
-    if not invalid_subset:
-        return []
-
-    mapped: list[int] = []
-    for local_idx in invalid_subset:
+    invalid_reasons: dict[int, str],
+) -> dict[int, str]:
+    """Map local invalid reasons (keyed by position in sequences subset) to global row indices."""
+    mapped: dict[int, str] = {}
+    for local_idx, reason in invalid_reasons.items():
         try:
             idx = int(local_idx)
         except (TypeError, ValueError):
             continue
         if 0 <= idx < len(global_indices):
-            mapped.append(global_indices[idx])
+            mapped[global_indices[idx]] = reason
     return mapped
+
+
+def _build_skipped_message(skipped_reasons: dict[int, str]) -> str:
+    """Serialize per-row skip reasons as a JSON array grouped by reason."""
+    if not skipped_reasons:
+        return ""
+    groups: dict[str, list[int]] = {}
+    for idx, reason in skipped_reasons.items():
+        groups.setdefault(reason, []).append(idx)
+    return json.dumps([
+        {"rows": sorted(rows), "reason": reason}
+        for reason, rows in groups.items()
+    ])
 
 
 def _load_input(job: Job) -> pd.DataFrame:

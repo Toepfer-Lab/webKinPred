@@ -216,40 +216,33 @@ function JobStatus() {
     return total > 0 ? Math.min(100, Math.round((made / total) * 100)) : 0;
   }, [metrics]);
 
-  // Build a nice expandable block for rows we couldn’t predict (if the API returns any flavour of this)
+  // Build a nice expandable block for rows we couldn't predict (if the API returns any flavour of this)
   const skippedRowsMessage = useMemo(() => {
     if (!jobStatus) return null;
-    const parts = [];
+    const raw = jobStatus.error_message;
+    if (!raw) return null;
 
-    const collect = (value) => {
-      if (!value) return;
-      if (Array.isArray(value)) {
-        if (value.length === 0) return;
-        const lines = value.map((item) => {
-          if (item == null) return '';
-          if (typeof item === 'object') {
-            const row = item.row ?? item.index ?? item.line ?? item.id ?? '';
-            const reason = item.reason ?? item.error ?? item.message ?? '';
-            if (row !== '' && reason) return `Row ${row}: ${reason}`;
-            if (row !== '') return `Row ${row}`;
-            return String(reason || JSON.stringify(item));
-          }
-          // primitive
-          return isFinite(item) ? `Row ${item}` : String(item);
-        }).filter(Boolean);
-        if (lines.length) {
-          parts.push(`${lines.join('\n')}`);
+    // Try to parse backend's structured JSON: [{rows: [0,2], reason: "..."}, ...]
+    if (typeof raw === 'string' && raw.trimStart().startsWith('[')) {
+      try {
+        const groups = JSON.parse(raw);
+        if (Array.isArray(groups) && groups.length > 0) {
+          const lines = groups.map(({ rows, reason }) => {
+            const label = Array.isArray(rows) && rows.length > 0
+              ? (rows.length === 1
+                  ? `Row ${rows[0] + 1}`
+                  : `Rows ${rows.map(r => r + 1).join(', ')}`)
+              : 'Some rows';
+            return `${label}: ${reason || 'Unknown reason'}`;
+          });
+          return lines.join('\n');
         }
-      } else if (typeof value === 'string') {
-        parts.push(`${value}`);
+      } catch {
+        // fall through to plain string
       }
-    };
+    }
 
-    // Try a few common keys
-    collect(jobStatus.error_message);
-
-    if (parts.length === 0) return null;
-    return parts.join('\n\n');
+    return typeof raw === 'string' ? raw : null;
   }, [jobStatus]);
 
   const failedMessage = useMemo(() => {

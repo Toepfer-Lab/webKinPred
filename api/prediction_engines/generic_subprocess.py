@@ -78,7 +78,7 @@ def run_generic_subprocess_prediction(
     }
 
     predictions: list[Any] = [None] * len(sequences)
-    valid_rows, valid_indices, invalid_indices = _validate_rows(
+    valid_rows, valid_indices, invalid_reasons = _validate_rows(
         sequences=sequences,
         per_row_inputs=per_row_inputs,
         input_format=desc.input_format,
@@ -91,7 +91,7 @@ def run_generic_subprocess_prediction(
     job.save(update_fields=["total_predictions", "predictions_made"])
 
     if not valid_indices:
-        return predictions, invalid_indices
+        return predictions, invalid_reasons
 
     python_path, script_path = _resolve_subprocess_paths(desc)
     env = _build_subprocess_env(desc)
@@ -172,13 +172,14 @@ def run_generic_subprocess_prediction(
         global_idx = valid_indices[local_idx]
         predictions[global_idx] = _normalise_prediction(value)
 
-    invalid_all = set(invalid_indices)
+    # Merge method-reported invalids (indices into valid_rows) into the reason dict
     for local_idx in invalid_subset:
         if 0 <= local_idx < len(valid_indices):
-            invalid_all.add(valid_indices[local_idx])
+            seq_idx = valid_indices[local_idx]
+            invalid_reasons.setdefault(seq_idx, "Prediction could not be made")
 
     _cleanup(input_file, output_file)
-    return predictions, sorted(invalid_all)
+    return predictions, invalid_reasons
 
 
 def _initialise_job_progress(job: Job, total_rows: int) -> None:
@@ -226,13 +227,13 @@ def _validate_rows(
     input_format: str,
     desc: MethodDescriptor,
     job: Job,
-) -> tuple[list[dict[str, Any]], list[int], list[int]]:
+) -> tuple[list[dict[str, Any]], list[int], dict[int, str]]:
     cfg = desc.subprocess
     assert cfg is not None
 
     valid_rows: list[dict[str, Any]] = []
     valid_indices: list[int] = []
-    invalid_indices: list[int] = []
+    invalid_reasons: dict[int, str] = {}
 
     allowed = set(cfg.allowed_amino_acids)
 
@@ -242,25 +243,29 @@ def _validate_rows(
             row[key] = values[idx]
 
         is_valid = True
+        reason = ""
 
         if cfg.validate_sequence:
             if not isinstance(seq, str) or not seq or any(c not in allowed for c in seq):
                 is_valid = False
+                reason = "Invalid protein sequence (unsupported amino acid characters)"
 
         if is_valid and cfg.validate_chemistry:
-            is_valid = _chemistry_is_valid(row, input_format)
+            if not _chemistry_is_valid(row, input_format):
+                is_valid = False
+                reason = "Invalid substrate (not a valid SMILES or InChI)"
 
         if is_valid:
             valid_indices.append(idx)
             valid_rows.append(row)
         else:
-            invalid_indices.append(idx)
+            invalid_reasons[idx] = reason
             job.invalid_rows += 1
 
         job.molecules_processed += 1
         job.save(update_fields=["molecules_processed", "invalid_rows"])
 
-    return valid_rows, valid_indices, invalid_indices
+    return valid_rows, valid_indices, invalid_reasons
 
 
 def _split_tokens(value: Any) -> list[str]:
