@@ -781,12 +781,14 @@ def _invoke_method_prediction(
     local indices (into sequences) to human-readable skip reasons.
     """
     if desc.pred_func is not None:
-        preds, invalid_list = desc.pred_func(
+        preds, invalid_result = desc.pred_func(
             sequences=sequences,
             public_id=public_id,
             **call_kwargs,
         )
-        return preds, {idx: "Prediction could not be made" for idx in (invalid_list or [])}
+        if isinstance(invalid_result, dict):
+            return preds, invalid_result
+        return preds, {idx: "Prediction could not be made" for idx in (invalid_result or [])}
 
     if desc.subprocess is not None:
         return run_generic_subprocess_prediction(

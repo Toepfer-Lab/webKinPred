@@ -32,7 +32,7 @@ def eitlem_predictions(
     substrates: list[str],
     kinetics_type: str = "KCAT",
     **kwargs,
-) -> tuple[list, list[int]]:
+) -> tuple[list, dict[int, str]]:
     """
     Run the EITLEM-Kinetics model on the given protein sequences and substrates.
 
@@ -51,8 +51,9 @@ def eitlem_predictions(
     -------
     predictions : list
         Predicted values (float) or None for invalid rows.
-    invalid_indices : list[int]
-        Indices of rows that could not be processed.
+    invalid_reasons : dict[int, str]
+        Maps row index to a human-readable reason for rows that could not
+        be processed.
 
     Raises
     ------
@@ -83,7 +84,7 @@ def eitlem_predictions(
         env["EITLEM_TOOLS_PATH"] = DATA_PATHS["tools"]
 
     valid_indices: list[int] = []
-    invalid_indices: list[int] = []
+    invalid_reasons: dict[int, str] = {}
     valid_smiles: list[str] = []
     valid_sequences: list[str] = []
     predictions: list = [None] * len(sequences)
@@ -99,8 +100,13 @@ def eitlem_predictions(
             valid_sequences.append(seq)
             valid_indices.append(idx)
         else:
-            print(f"  Row {idx + 1}: invalid {'sequence' if not seq_valid else 'substrate'}")
-            invalid_indices.append(idx)
+            reason = (
+                "Invalid protein sequence (unsupported amino acid characters)"
+                if not seq_valid
+                else "Invalid substrate (not a valid SMILES or InChI)"
+            )
+            print(f"  Row {idx + 1}: {reason}")
+            invalid_reasons[idx] = reason
             job.invalid_rows += 1
 
         job.save(update_fields=["molecules_processed", "invalid_rows"])
@@ -109,7 +115,7 @@ def eitlem_predictions(
     job.save(update_fields=["total_predictions"])
 
     if not valid_indices:
-        return predictions, invalid_indices
+        return predictions, invalid_reasons
 
     # ── Write CSV input file ──────────────────────────────────────────────────
     try:
@@ -168,7 +174,7 @@ def eitlem_predictions(
         predictions[global_idx] = None if pred in ("None", "", np.nan, "nan") else pred
 
     _cleanup(input_file, output_file)
-    return predictions, invalid_indices
+    return predictions, invalid_reasons
 
 
 def _cleanup(*paths: str) -> None:

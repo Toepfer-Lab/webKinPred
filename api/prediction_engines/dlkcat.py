@@ -30,7 +30,7 @@ def dlkcat_predictions(
     public_id: str,
     substrates: list[str],
     **kwargs,
-) -> tuple[list, list[int]]:
+) -> tuple[list, dict[int, str]]:
     """
     Run the DLKcat model on the given protein sequences and substrates.
 
@@ -47,9 +47,9 @@ def dlkcat_predictions(
     -------
     predictions : list
         Predicted kcat values (float) or None for invalid rows.
-    invalid_indices : list[int]
-        Indices of rows that could not be processed due to invalid substrate
-        or sequence format.
+    invalid_reasons : dict[int, str]
+        Maps row index to a human-readable reason for rows that could not
+        be processed.
 
     Raises
     ------
@@ -80,7 +80,7 @@ def dlkcat_predictions(
         env["DLKCAT_RESULTS_PATH"] = DATA_PATHS["DLKcat_Results"]
 
     valid_indices: list[int] = []
-    invalid_indices: list[int] = []
+    invalid_reasons: dict[int, str] = {}
     valid_smiles: list[str] = []
     valid_sequences: list[str] = []
     predictions: list = [None] * len(sequences)
@@ -91,21 +91,25 @@ def dlkcat_predictions(
         seq_valid = all(c in _AMINO_ACIDS for c in seq)
         mol = convert_to_mol(substrate) if seq_valid else None
 
-        if mol and seq_valid:
+        reason = ""
+        if not seq_valid:
+            reason = "Invalid protein sequence (unsupported amino acid characters)"
+        elif mol is None:
+            reason = "Invalid substrate (not a valid SMILES or InChI)"
+        else:
             mol_with_h = Chem.AddHs(mol)
             smiles = Chem.MolToSmiles(mol_with_h)
-            if "." not in smiles:
+            if "." in smiles:
+                reason = "Substrate contains multiple disconnected fragments and cannot be processed"
+            else:
                 valid_smiles.append(smiles)
                 valid_sequences.append(seq)
                 valid_indices.append(idx)
                 job.save(update_fields=["molecules_processed", "invalid_rows"])
                 continue
 
-        print(
-            f"  Row {idx + 1}: invalid "
-            f"{'sequence' if not seq_valid else 'substrate'}"
-        )
-        invalid_indices.append(idx)
+        print(f"  Row {idx + 1}: {reason}")
+        invalid_reasons[idx] = reason
         job.invalid_rows += 1
         job.save(update_fields=["molecules_processed", "invalid_rows"])
 
@@ -113,7 +117,7 @@ def dlkcat_predictions(
     job.save(update_fields=["total_predictions"])
 
     if not valid_indices:
-        return predictions, invalid_indices
+        return predictions, invalid_reasons
 
     # ── Write TSV input file ──────────────────────────────────────────────────
     try:
@@ -178,7 +182,7 @@ def dlkcat_predictions(
         predictions[global_idx] = None if pred in (None, np.nan) else pred
 
     _cleanup(input_file, output_file)
-    return predictions, invalid_indices
+    return predictions, invalid_reasons
 
 
 def _cleanup(*paths: str) -> None:

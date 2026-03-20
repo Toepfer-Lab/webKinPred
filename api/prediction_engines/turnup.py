@@ -33,7 +33,7 @@ def turnup_predictions(
     substrates: list[str],
     products: list[str],
     **kwargs,
-) -> tuple[list, list[int]]:
+) -> tuple[list, dict[int, str]]:
     """
     Run the TurNup model on the given protein sequences, substrates, and
     products.
@@ -54,8 +54,9 @@ def turnup_predictions(
     -------
     predictions : list
         Predicted kcat values (float) or None for invalid rows.
-    invalid_indices : list[int]
-        Indices of rows that could not be processed.
+    invalid_reasons : dict[int, str]
+        Maps row index to a human-readable reason for rows that could not
+        be processed.
 
     Raises
     ------
@@ -86,7 +87,7 @@ def turnup_predictions(
         env["TURNUP_TOOLS_PATH"] = DATA_PATHS["tools"]
 
     valid_indices: list[int] = []
-    invalid_indices: list[int] = []
+    invalid_reasons: dict[int, str] = {}
     valid_sub_inchis: list[str] = []
     valid_prod_inchis: list[str] = []
     valid_sequences: list[str] = []
@@ -102,9 +103,18 @@ def turnup_predictions(
         prod_mols = [convert_to_mol(p) for p in prod_tokens]
         seq_valid = all(c in _AMINO_ACIDS for c in seq)
 
-        if None in sub_mols or None in prod_mols or not seq_valid:
-            print(f"  Row {idx + 1}: invalid {'sequence' if not seq_valid else 'substrate/product'}")
-            invalid_indices.append(idx)
+        if not seq_valid:
+            reason = "Invalid protein sequence (unsupported amino acid characters)"
+        elif None in sub_mols:
+            reason = "Invalid substrate (not a valid SMILES or InChI)"
+        elif None in prod_mols:
+            reason = "Invalid product (not a valid SMILES or InChI)"
+        else:
+            reason = ""
+
+        if reason:
+            print(f"  Row {idx + 1}: {reason}")
+            invalid_reasons[idx] = reason
             job.invalid_rows += 1
         else:
             sub_inchi = ";".join(Chem.MolToInchi(mol) for mol in sub_mols)
@@ -120,7 +130,7 @@ def turnup_predictions(
     job.save(update_fields=["total_predictions"])
 
     if not valid_indices:
-        return predictions, invalid_indices
+        return predictions, invalid_reasons
 
     # ── Write CSV input file ──────────────────────────────────────────────────
     try:
@@ -180,7 +190,7 @@ def turnup_predictions(
         predictions[global_idx] = None if pred in ("None", "", np.nan, "nan") else pred
 
     _cleanup(input_file, output_file)
-    return predictions, invalid_indices
+    return predictions, invalid_reasons
 
 
 def _cleanup(*paths: str) -> None:
