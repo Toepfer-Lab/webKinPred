@@ -13,7 +13,7 @@ export default function HowToUseCard({ methods = {} }) {
   const targetLabel = {
     kcat: 'kcat',
     Km: 'Km',
-    'kcat/Km': 'kcat/Km ratio',
+    'kcat/Km': 'kcat/Km',
   };
 
   return (
