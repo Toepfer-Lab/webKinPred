@@ -14,10 +14,6 @@ def _turnup_predictions_lazy(*args, **kwargs):
 descriptor = MethodDescriptor(
     key="TurNup",
     display_name="TurNup",
-    description=(
-        "Machine-learning model optimised for natural wild-type reactions "
-        "with multi-substrate and multi-product support."
-    ),
     authors=(
         "Alexander Kroll, Yvan Rousset, Xiao-Pan Hu, "
         "Nina A. Liebrand & Martin J. Lercher"

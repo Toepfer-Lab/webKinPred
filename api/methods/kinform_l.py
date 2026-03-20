@@ -14,10 +14,6 @@ def _kinform_predictions_lazy(*args, **kwargs):
 descriptor = MethodDescriptor(
     key="KinForm-L",
     display_name="KinForm-L",
-    description=(
-        "KinForm variant recommended for enzymes with low sequence "
-        "similarity to the training data."
-    ),
     authors="Saleh Alwer, Ronan M T Fleming",
     publication_title=(
         "KinForm: Kinetics Informed Feature Optimised Representation "

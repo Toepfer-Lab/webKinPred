@@ -14,7 +14,6 @@ from api.prediction_engines.your_method import your_method_predictions  # only f
 descriptor = MethodDescriptor(
     key="YourMethod",                  # unique ID used in API/UI
     display_name="Your Method",        # human-readable name
-    description="One-line summary.",
     authors="Author A, Author B",
     publication_title="Paper title",
     citation_url="https://doi.org/...",

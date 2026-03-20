@@ -1,12 +1,21 @@
 // src/components/HowToUseCard.js
 
 import React from 'react';
-import { Card, Row, Col, Alert, ListGroup, Button, Badge } from 'react-bootstrap';
+import { Card, Row, Col, Alert, ListGroup, Button } from 'react-bootstrap';
 import { BoxArrowInDown, Bullseye, CloudUpload, Cpu, Github } from 'react-bootstrap-icons';
 import '../../../styles/components/HowToUseCard.css';
 
 
 export default function HowToUseCard({ methods = {} }) {
+  const methodEntries = Object.entries(methods).sort(([, a], [, b]) =>
+    (a.displayName || '').localeCompare(b.displayName || '')
+  );
+  const targetLabel = {
+    kcat: 'kcat',
+    Km: 'Km',
+    'kcat/Km': 'kcat/Km ratio',
+  };
+
   return (
     <Card className="section-container how-to-use-card mb-4">
       <Card.Header as="h3" className="text-center">
@@ -110,44 +119,60 @@ export default function HowToUseCard({ methods = {} }) {
 
         <hr className="my-4" />
         <h4 className="text-center mb-4">Available Prediction Methods</h4>
-        <Row className="g-3">
-          {Object.entries(methods).map(([key, details]) => (
-            <Col key={key} md={6} lg={4}>
+        <Row className="g-2 method-cards-grid">
+          {methodEntries.map(([key, details]) => (
+            <Col key={key} xs={12} sm={6} lg={4} xl={3}>
               <Card className="method-card h-100">
-                <Card.Body className="d-flex flex-column">
-                  <div className="d-flex justify-content-between align-items-start mb-2">
+                <Card.Body className="method-card-body">
+                  <div className="method-head">
                     <Card.Title className="method-title mb-0">{details.displayName}</Card.Title>
-                    <a
-                      href={details.repoUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="github-link"
-                      title="View on GitHub"
-                    >
-                      <Github size={20} />
-                    </a>
+                    {details.repoUrl && (
+                      <a
+                        href={details.repoUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="github-link"
+                        title="View on GitHub"
+                      >
+                        <Github size={18} />
+                      </a>
+                    )}
                   </div>
-                  <Card.Text className="method-description flex-grow-1">
-                    {details.description}
-                  </Card.Text>
+
                   <div className="method-publication">
-                    <a
-                      href={details.citationUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="publication-link"
-                    >
-                      <small className="publication-title">{details.publicationTitle}</small>
-                    </a>
-                    <small className="text-muted d-block mt-1">{details.authors}</small>
+                    {details.citationUrl ? (
+                      <a
+                        href={details.citationUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="publication-link"
+                      >
+                        <span className="publication-title">{details.publicationTitle}</span>
+                      </a>
+                    ) : (
+                      <span className="publication-title">{details.publicationTitle}</span>
+                    )}
+                    {details.authors && (
+                      <small className="method-authors">{details.authors}</small>
+                    )}
                   </div>
+
                   {details.moreInfo && (
-                    <div className="mt-2">
-                      <Badge bg="secondary" className="more-info-badge">
-                        {details.moreInfo}
-                      </Badge>
+                    <div className="method-note">
+                      <span className="method-note-label">Note:</span> {details.moreInfo}
                     </div>
                   )}
+
+                  <div className="method-targets">
+                    <span className="method-targets-label">Predicts</span>
+                    <div className="method-target-list">
+                      {(details.supports || []).map((target) => (
+                        <span key={`${key}-${target}`} className="method-target-chip">
+                          {targetLabel[target] || target}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 </Card.Body>
               </Card>
             </Col>

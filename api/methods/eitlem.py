@@ -14,10 +14,6 @@ def _eitlem_predictions_lazy(*args, **kwargs):
 descriptor = MethodDescriptor(
     key="EITLEM",
     display_name="EITLEM-Kinetics",
-    description=(
-        "Ensemble deep-learning model that predicts kcat and KM "
-        "from enzyme sequence and substrate."
-    ),
     authors=(
         "Xiaowei Shen, Ziheng Cui, Jianyu Long, Shiding Zhang, "
         "Biqiang Chen, Tianwei Tan"

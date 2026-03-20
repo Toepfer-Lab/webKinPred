@@ -8,10 +8,6 @@ from api.methods.base import MethodDescriptor, SubprocessEngineConfig
 descriptor = MethodDescriptor(
     key="CataPro",
     display_name="CataPro",
-    description=(
-        "Predicting kcat, Km, and kcat/Km based on protein language models, "
-        "small-molecule language models, and molecular fingerprint features."
-    ),
     authors=(
         "Zechen Wang, Dongqi Xie, Dong Wu, Xiaozhou Luo, Sheng Wang, "
         "Yangyang Li, Yanmei Yang, Weifeng Li, Liangzhen Zheng"

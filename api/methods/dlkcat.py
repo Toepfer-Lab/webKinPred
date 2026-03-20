@@ -14,10 +14,6 @@ def _dlkcat_predictions_lazy(*args, **kwargs):
 descriptor = MethodDescriptor(
     key="DLKcat",
     display_name="DLKcat",
-    description=(
-        "Deep-learning model for kcat prediction using enzyme sequence "
-        "and substrate structure."
-    ),
     authors=(
         "Feiran Li, Le Yuan, Hongzhong Lu, Gang Li, Yu Chen, "
         "Martin K. M. Engqvist, Eduard J. Kerkhoven & Jens Nielsen"

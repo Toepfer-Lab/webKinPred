@@ -14,10 +14,6 @@ def _unikp_predictions_lazy(*args, **kwargs):
 descriptor = MethodDescriptor(
     key="UniKP",
     display_name="UniKP",
-    description=(
-        "Unified kinetic parameter predictor for kcat and KM, "
-        "based on protein language model embeddings."
-    ),
     authors=(
         "Han Yu, Huaxiang Deng, Jiahui He, "
         "Jay D. Keasling & Xiaozhou Luo"

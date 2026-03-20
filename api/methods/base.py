@@ -128,9 +128,6 @@ class MethodDescriptor:
         Human-readable name shown in the UI and included in result CSVs
         (e.g. ``"KinForm-H"``).
 
-    description : str
-        One-sentence description of what the method does and what it needs.
-
     authors : str
         Author list for the underlying publication.
 
@@ -246,7 +243,6 @@ class MethodDescriptor:
     # ── Identity ──────────────────────────────────────────────────────────────
     key: str
     display_name: str
-    description: str
     authors: str
     publication_title: str
     citation_url: str

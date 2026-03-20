@@ -100,7 +100,6 @@ def api_list_methods(request):
       "methods": {
         "<method_key>": {
           "displayName":       str,
-          "description":       str,
           "authors":           str,
           "publicationTitle":  str,
           "citationUrl":       str,
@@ -135,7 +134,6 @@ def api_list_methods(request):
         return {
             "id": key,
             "displayName": desc.display_name,
-            "description": desc.description,
             "authors": desc.authors,
             "publicationTitle": desc.publication_title,
             "citationUrl": desc.citation_url,
