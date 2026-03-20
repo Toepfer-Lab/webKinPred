@@ -12,10 +12,11 @@
 #   these. `docker image prune -f` at the end cleans them up.
 #
 # How the cache is preserved:
-#   BuildKit layer cache reuses unchanged Dockerfile layers (conda envs,
-#   pip installs) when only code changes.  The --mount=type=cache mounts
-#   in the Dockerfile keep download caches (conda pkgs, pip wheels) across
-#   full rebuilds so you never re-download the same file twice.
+#   BuildKit reuses unchanged stages (each conda env is its own stage).
+#   Only stages whose inputs changed are rebuilt — the rest are skipped
+#   entirely. The --mount=type=cache mounts in the Dockerfile keep download
+#   caches (conda pkgs, pip wheels) across full rebuilds so you never
+#   re-download the same file twice.
 
 set -euo pipefail
 

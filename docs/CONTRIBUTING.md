@@ -150,18 +150,29 @@ If your method needs a new Python environment, you must update the full worker i
 docker-requirements/your_method_requirements.txt
 ```
 
-2. Add an env layer in `Dockerfile` (same pattern as current methods):
+2. Add a parallel env stage in `Dockerfile`.
+
+The Dockerfile uses multi-stage builds so all envs are built in parallel by BuildKit. Add two things:
+
+**a) A new `FROM base AS env-your_method` stage** (alongside the other `env-*` stages):
 
 ```dockerfile
+# ── YourMethod ────────────────────────────────────────────────────────────────
+FROM base AS env-your_method
 COPY docker-requirements/your_method_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,id=webkinpred-pip-py310,target=/root/.cache/pip,sharing=locked \
     mamba create -n your_method_env python=3.10 -c conda-forge -y \
-    && conda run -n your_method_env pip install -r docker-requirements/your_method_requirements.txt \
-    && conda clean -afy
+    && conda run -n your_method_env pip install -r docker-requirements/your_method_requirements.txt
 ```
 
-If your method needs extra conda packages (example: RDKit, XGBoost), install them in this same layer before `pip install` (see `DLKcat` and `TurNup` blocks in `Dockerfile`).
+If your method needs extra conda packages (e.g. RDKit, XGBoost), install them before `pip install` (see `env-dlkcat` and `env-turnup` stages for examples).
+
+**b) A `COPY --from` line in the `final` stage** (alongside the other env copies):
+
+```dockerfile
+COPY --from=env-your_method /opt/conda/envs/your_method_env /opt/conda/envs/your_method_env
+```
 
 3. Add runtime keys in:
 - `webKinPred/config_docker.py`

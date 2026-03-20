@@ -4,16 +4,14 @@
 # Service → Image mapping:
 #   backend     → Dockerfile.web   (slim Python, no conda)  ~seconds to rebuild
 #   celery-beat → Dockerfile.web   (slim Python, no conda)  reuses backend image
-#   celery      → Dockerfile        (full worker, all conda envs)
+#   celery      → Dockerfile       (full worker, all conda envs, parallel stages)
 #   frontend    → frontend/Dockerfile.prod
 #
-# Fastest rebuild after `git pull` (code-only changes):
-#   DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
-#     docker compose -f docker-compose.prod.yml up -d --build backend celery-beat frontend
+# Use deploy.sh for all deploys — it handles BuildKit flags and prunes dangling
+# images automatically so disk space does not accumulate:
 #
-# Rebuild celery worker only when docker-requirements/*.txt change:
-#   DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
-#     docker compose -f docker-compose.prod.yml up -d --build celery
+#   ./deploy.sh                  # full prod deploy
+#   ./deploy.sh prod celery      # rebuild only the celery worker
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Reusable fragments ────────────────────────────────────────────────────────
