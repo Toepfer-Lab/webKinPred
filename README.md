@@ -285,7 +285,7 @@ All errors return JSON with a single `error` key:
 
 ## Attribution
 
-Please cite the original publications when using predictions from a specific engine. When publishing aggregated results produced through WebKinPred, cite all underlying sources plus this platform.
+Please cite the original publications when using predictions from a specific engine. Cite all underlying sources plus this platform.
 
 ## Contact
 
