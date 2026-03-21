@@ -52,73 +52,7 @@ export default function HowToUseCard({ methods = {} }) {
 
         <hr className="my-4" />
 
-        <h4 className="text-center mb-4">Input Data Format</h4>
-        <Row>
-          <Col md={6} className="mb-3">
-            <Card className="h-100 format-card">
-              <Card.Body>
-                <Card.Title>Single-Substrate Models</Card.Title>
-                <Card.Subtitle className="mb-2 text-white-70">
-                  DLKcat, EITLEM, UniKP, KinForm-H, KinForm-L, CataPro
-                </Card.Subtitle>
-                <ListGroup variant="flush">
-                  <ListGroup.Item>
-                    <span className="csv-col">Protein Sequence</span> — Full amino-acid sequence.
-                  </ListGroup.Item>
-                  <ListGroup.Item>
-                    <span className="csv-col">Substrate</span> — One <code>SMILES</code> or <code>InChI</code> string.
-                  </ListGroup.Item>
-                </ListGroup>
-              </Card.Body>
-            </Card>
-          </Col>
-          <Col md={6} className="mb-3">
-            <Card className="h-100 format-card">
-              <Card.Body>
-                <Card.Title>Multi-Substrate Model</Card.Title>
-                <Card.Subtitle className="mb-2 text-white-70">TurNup</Card.Subtitle>
-                <ListGroup variant="flush">
-                  <ListGroup.Item>
-                    <span className="csv-col">Protein Sequence</span> — Full amino-acid sequence.
-                  </ListGroup.Item>
-                  <ListGroup.Item>
-                    <span className="csv-col">Substrates</span> — Semicolon-separated list of <code>SMILES</code> or <code>InChI</code>.
-                  </ListGroup.Item>
-                  <ListGroup.Item>
-                    <span className="csv-col">Products</span> — Semicolon-separated list of <code>SMILES</code> or <code>InChI</code>.
-                  </ListGroup.Item>
-                </ListGroup>
-              </Card.Body>
-            </Card>
-          </Col>
-        </Row>
-        <p className="text-center text-white-70">
-            Multi-substrate CSVs can also be used for K<sub>M</sub> predictions. Each entry in the 'Substrates' column will receive its own K<sub>M</sub> value (separated by semicolons).
-        </p>
-        <hr className="my-4" />
-        <h4 className="text-center mb-3">Example Templates</h4>
-        <div className="d-grid gap-2 d-md-flex justify-content-md-center">
-            <Button
-            href="/templates/single_substrate_template.csv"
-            download
-            className="btn btn-custom-subtle"
-            >
-            <BoxArrowInDown className="me-2" />
-            Single-Substrate Template
-            </Button>
-
-            <Button
-            href="/templates/multi_substrate_template.csv"
-            download
-            className="btn btn-custom-subtle"
-            >
-            <BoxArrowInDown className="me-2" />
-            Multi-Substrate Template
-            </Button>
-        </div>
-
-        <hr className="my-4" />
-        <h4 className="text-center mb-4">Available Prediction Methods</h4>
+        <h4 className="text-center mb-4">Available Predictors</h4>
         <Row className="g-2 method-cards-grid">
           {methodEntries.map(([key, details]) => (
             <Col key={key} xs={12} sm={6} lg={4} xl={3}>
@@ -178,6 +112,73 @@ export default function HowToUseCard({ methods = {} }) {
             </Col>
           ))}
         </Row>
+
+        <hr className="my-4" />
+        <h4 className="text-center mb-4">Input Data Format</h4>
+        <Row>
+          <Col md={6} className="mb-3">
+            <Card className="h-100 format-card">
+              <Card.Body>
+                <Card.Title>Single-Substrate Models</Card.Title>
+                <Card.Subtitle className="mb-2 text-white-70">
+                  DLKcat, EITLEM, UniKP, KinForm-H, KinForm-L, CataPro
+                </Card.Subtitle>
+                <ListGroup variant="flush">
+                  <ListGroup.Item>
+                    <span className="csv-col">Protein Sequence</span> — Full amino-acid sequence.
+                  </ListGroup.Item>
+                  <ListGroup.Item>
+                    <span className="csv-col">Substrate</span> — One <code>SMILES</code> or <code>InChI</code> string.
+                  </ListGroup.Item>
+                </ListGroup>
+              </Card.Body>
+            </Card>
+          </Col>
+          <Col md={6} className="mb-3">
+            <Card className="h-100 format-card">
+              <Card.Body>
+                <Card.Title>Multi-Substrate Model</Card.Title>
+                <Card.Subtitle className="mb-2 text-white-70">TurNup</Card.Subtitle>
+                <ListGroup variant="flush">
+                  <ListGroup.Item>
+                    <span className="csv-col">Protein Sequence</span> — Full amino-acid sequence.
+                  </ListGroup.Item>
+                  <ListGroup.Item>
+                    <span className="csv-col">Substrates</span> — Semicolon-separated list of <code>SMILES</code> or <code>InChI</code>.
+                  </ListGroup.Item>
+                  <ListGroup.Item>
+                    <span className="csv-col">Products</span> — Semicolon-separated list of <code>SMILES</code> or <code>InChI</code>.
+                  </ListGroup.Item>
+                </ListGroup>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+        <p className="text-center text-white-70">
+          Multi-substrate CSVs can also be used for K<sub>M</sub> predictions. Each entry in the 'Substrates' column will receive its own K<sub>M</sub> value (separated by semicolons).
+        </p>
+
+        <hr className="my-4" />
+        <h4 className="text-center mb-3">Example Templates</h4>
+        <div className="d-grid gap-2 d-md-flex justify-content-md-center">
+          <Button
+            href="/templates/single_substrate_template.csv"
+            download
+            className="btn btn-custom-subtle"
+          >
+            <BoxArrowInDown className="me-2" />
+            Single-Substrate Template
+          </Button>
+
+          <Button
+            href="/templates/multi_substrate_template.csv"
+            download
+            className="btn btn-custom-subtle"
+          >
+            <BoxArrowInDown className="me-2" />
+            Multi-Substrate Template
+          </Button>
+        </div>
       </Card.Body>
     </Card>
   );

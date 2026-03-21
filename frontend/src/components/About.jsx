@@ -5,7 +5,7 @@ import './ApiDocs/ApiDocs.css';
 
 const About = () => {
   const [copied, setCopied] = useState(false);
-  const citationText = "KineticXPredictor: ....";
+  const citationText = "OpenKineticsPredictor: ....";
 
   const copyCitation = () => {
     navigator.clipboard.writeText(citationText)
@@ -19,7 +19,7 @@ const About = () => {
   return (
     <div className="api-docs-page">
     <div className="container pt-4" style={{ color: '#e8e6f0' }}>
-      <h2>About KineticXPredictor</h2>
+      <h2>About OpenKineticsPredictor</h2>
       <section>
         <p>
           {/* Add your detailed description here */}

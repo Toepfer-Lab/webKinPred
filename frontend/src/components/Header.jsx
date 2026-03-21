@@ -8,7 +8,7 @@ function Header() {
   return (
     <Navbar expand="lg" className="custom-navbar">
       <Container>
-        <Navbar.Brand as={Link} to="/">KineticXPredictor</Navbar.Brand>
+        <Navbar.Brand as={Link} to="/">OpenKineticsPredictor</Navbar.Brand>
         <Navbar.Toggle aria-controls="basic-navbar-nav" />
         <Navbar.Collapse id="basic-navbar-nav">
           <Nav className="ml-auto">
