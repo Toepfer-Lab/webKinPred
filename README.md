@@ -1,8 +1,8 @@
-# kineticXpredictor
+# Open Kinetics Predictor
 
-kineticXpredictor is a production web interface for predicting enzyme kinetic parameters (kcat and KM) from protein sequence and substrate SMILES. It consolidates several state‑of‑the‑art machine learning / deep learning models behind a unified, asynchronous job API so you can submit sequences and retrieve structured predictions.
+Open Kinetics Predictor is a production web interface for predicting enzyme kinetic parameters (kcat and KM) from protein sequence and substrate SMILES. It consolidates several state‑of‑the‑art machine learning / deep learning models behind a unified, asynchronous job API so you can submit sequences and retrieve structured predictions.
 
-**Live service:** [https://kineticxpredictor.humanmetabolism.org/](https://kineticxpredictor.humanmetabolism.org/)
+**Live service:** [https://predictor.openkinetics.org/](https://predictor.openkinetics.org/)
 
 ## Prediction Engines
 
@@ -55,13 +55,13 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for a step-by-step guide.
 
 ## API Access
 
-KineticXPredictor provides a REST API for programmatic access. Submit prediction
+OpenKineticsPredictor provides a REST API for programmatic access. Submit prediction
 jobs, poll their status, and download results — no web browser required.
 
-**Base URL:** `https://kineticxpredictor.humanmetabolism.org/api/v1`
+**Base URL:** `https://predictor.openkinetics.org/api/v1`
 
 > **Full interactive documentation** is also available on the live site at
-> [`/api-docs`](https://kineticxpredictor.humanmetabolism.org/api-docs).
+> [`/api-docs`](https://predictor.openkinetics.org/api-docs).
 
 ---
 
@@ -86,7 +86,7 @@ import requests
 import time
 
 API_KEY = "ak_your_key_here"
-BASE    = "https://kineticxpredictor.humanmetabolism.org/api/v1"
+BASE    = "https://predictor.openkinetics.org/api/v1"
 HEADERS = {"Authorization": f"Bearer {API_KEY}"}
 
 # 1. Submit a job
@@ -129,7 +129,7 @@ print("Saved to output.csv")
 
 ```bash
 API_KEY="ak_your_key_here"
-BASE="https://kineticxpredictor.humanmetabolism.org/api/v1"
+BASE="https://predictor.openkinetics.org/api/v1"
 
 # 1. Submit
 JOB=$(curl -s -X POST "$BASE/submit/" \
@@ -194,7 +194,7 @@ This is equivalent to the validation step available in the web interface.
 import requests
 
 API_KEY = "ak_your_key_here"
-BASE    = "https://kineticxpredictor.humanmetabolism.org/api/v1"
+BASE    = "https://predictor.openkinetics.org/api/v1"
 HEADERS = {"Authorization": f"Bearer {API_KEY}"}
 
 # Basic validation (fast)

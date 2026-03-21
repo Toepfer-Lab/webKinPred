@@ -1,5 +1,5 @@
 """
-test_api.py — Comprehensive API test suite for the KineticXPredictor REST API.
+test_api.py — Comprehensive API test suite for the Open Kinetics Predictor REST API.
 
 Tests every endpoint, every expected success response, and every expected error
 response.  Designed to run against a local Django dev server.
@@ -759,7 +759,7 @@ def test_wrong_methods(base: str, headers: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="KineticXPredictor API test suite")
+    parser = argparse.ArgumentParser(description="Open Kinetics Predictor API test suite")
     parser.add_argument("--base", default=DEFAULT_BASE,
                         help="Base URL including /api/v1 (default: %(default)s)")
     parser.add_argument("--key",  default=DEFAULT_KEY,
@@ -807,7 +807,7 @@ def main():
             )
 
     print("=" * 70)
-    print("  KineticXPredictor API Test Suite")
+    print("  Open Kinetics Predictor API Test Suite")
     print(f"  Base URL : {base}")
     print(f"  API Key  : {key[:15]}…")
     print(f"  Methods  : {', '.join(sorted(methods))}")

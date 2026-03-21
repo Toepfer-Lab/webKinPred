@@ -73,7 +73,7 @@ def api_health(request):
     return JsonResponse(
         {
             "status": "ok",
-            "service": "KineticXPredictor API",
+            "service": "Open Kinetics Predictor API",
             "version": "1",
             "timestamp": timezone.now().isoformat(),
         }
