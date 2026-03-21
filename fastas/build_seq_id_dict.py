@@ -9,7 +9,8 @@ start = time()
 fasta_paths = [
     "/home/saleh/webKinPred/fastas/dlkcat_sequences.fasta",
     "/home/saleh/webKinPred/fastas/EITLEM_sequences.fasta",
-    "/home/saleh/webKinPred/fastas/turnup_sequences.fasta"
+    "/home/saleh/webKinPred/fastas/turnup_sequences.fasta",
+    "/home/saleh/webKinPred/fastas/catapro_sequences.fasta",
 ]
 output_path = "/home/saleh/webKinPred/media/sequence_info/seq_id_to_seq.json"
 

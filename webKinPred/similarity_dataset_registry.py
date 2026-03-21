@@ -21,4 +21,8 @@ SIMILARITY_DATASET_REGISTRY: dict[str, dict[str, str]] = {
         "fasta_filename": "turnup_sequences.fasta",
         "db_name": "targetdb_turnup",
     },
+    "CataPro": {
+        "fasta_filename": "catapro_sequences.fasta",
+        "db_name": "targetdb_catapro",
+    },
 }
