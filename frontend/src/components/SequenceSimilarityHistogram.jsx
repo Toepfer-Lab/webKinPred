@@ -128,53 +128,6 @@ function SequenceSimilarityHistogram({ similarityData }) {
 
   return (
     <div>
-      <h5 className="tab-section-header text-center mb-4">Sequence Similarity Histogram</h5>
-
-      <Accordion defaultActiveKey="0" className="custom-accordion">
-        <Accordion.Item eventKey="0">
-          <Accordion.Header>
-            <InfoCircle className="me-2" /> What does this chart show?
-          </Accordion.Header>
-          <Accordion.Body>
-            This histogram displays the distribution of sequence similarities found when searching your input protein sequences against the training data of a selected model. This helps you understand how novel or similar your sequences are compared to the data the model was trained on, which can influence prediction confidence.
-          </Accordion.Body>
-        </Accordion.Item>
-
-        <Accordion.Item eventKey="1">
-          <Accordion.Header>
-            <Diagram3 className="me-2" /> Understanding Similarity Types
-          </Accordion.Header>
-          <Accordion.Body>
-            You can view the similarity distribution in two ways:
-            <Row className="mt-2">
-              <Col md={6}>
-                <strong>Max Similarity</strong>
-                <p className="text-white-50 small">The single highest percentage identity found for each of your sequences. This represents the "best match" in the training data.</p>
-              </Col>
-              <Col md={6}>
-                <strong>Mean Similarity</strong>
-                <p className="text-white-50 small">The average percentage identity calculated from all significant alignment hits found for each of your sequences.</p>
-              </Col>
-            </Row>
-          </Accordion.Body>
-        </Accordion.Item>
-
-        <Accordion.Item eventKey="2">
-          <Accordion.Header>
-            <GearFill className="me-2" /> Technical Details & Parameters
-          </Accordion.Header>
-          <Accordion.Body>
-            <p>If no significant hits are found for a sequence, both its mean and max similarity are set to 0%. All similarity values are rounded to the nearest integer for binning.</p>
-            <strong>MMseqs2 Parameters Used:</strong>
-            <ul className="list-unstyled ps-3 mt-1 parameter-list">
-              <li><code>-s</code> (sensitivity): <code>7.5</code></li>
-              <li><code>-e</code> (E-value): <code>0.001</code></li>
-              <li><code>--max-seqs</code>: <code>5000</code></li>
-            </ul>
-          </Accordion.Body>
-        </Accordion.Item>
-      </Accordion>
-
       <div className="mt-4">
         <h5 className="text-white-50 text-center mb-3">Chart Controls</h5>
         <div className="p-3 rounded" style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
@@ -233,6 +186,53 @@ function SequenceSimilarityHistogram({ similarityData }) {
         </div>
       )}
       <Bar data={data} options={options} />
+
+      <h5 className="tab-section-header text-center mt-5 mb-4">Sequence Similarity Histogram</h5>
+
+      <Accordion defaultActiveKey="0" className="custom-accordion">
+        <Accordion.Item eventKey="0">
+          <Accordion.Header>
+            <InfoCircle className="me-2" /> What does this chart show?
+          </Accordion.Header>
+          <Accordion.Body>
+            This histogram displays the distribution of sequence similarities found when searching your input protein sequences against the training data of a selected model. This helps you understand how novel or similar your sequences are compared to the data the model was trained on, which can influence prediction confidence.
+          </Accordion.Body>
+        </Accordion.Item>
+
+        <Accordion.Item eventKey="1">
+          <Accordion.Header>
+            <Diagram3 className="me-2" /> Understanding Similarity Types
+          </Accordion.Header>
+          <Accordion.Body>
+            You can view the similarity distribution in two ways:
+            <Row className="mt-2">
+              <Col md={6}>
+                <strong>Max Similarity</strong>
+                <p className="text-white-50 small">The single highest percentage identity found for each of your sequences. This represents the "best match" in the training data.</p>
+              </Col>
+              <Col md={6}>
+                <strong>Mean Similarity</strong>
+                <p className="text-white-50 small">The average percentage identity calculated from all significant alignment hits found for each of your sequences.</p>
+              </Col>
+            </Row>
+          </Accordion.Body>
+        </Accordion.Item>
+
+        <Accordion.Item eventKey="2">
+          <Accordion.Header>
+            <GearFill className="me-2" /> Technical Details & Parameters
+          </Accordion.Header>
+          <Accordion.Body>
+            <p>If no significant hits are found for a sequence, both its mean and max similarity are set to 0%. All similarity values are rounded to the nearest integer for binning.</p>
+            <strong>MMseqs2 Parameters Used:</strong>
+            <ul className="list-unstyled ps-3 mt-1 parameter-list">
+              <li><code>-s</code> (sensitivity): <code>7.5</code></li>
+              <li><code>-e</code> (E-value): <code>0.001</code></li>
+              <li><code>--max-seqs</code>: <code>5000</code></li>
+            </ul>
+          </Accordion.Body>
+        </Accordion.Item>
+      </Accordion>
     </div>
   );
 }
