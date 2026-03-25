@@ -9,12 +9,11 @@ function Footer() {
         <div className="row align-items-center text-center text-lg-start">
 
           {/* Column 1: App Name and Copyright */}
-          <div className="col-lg-4 col-md-12 mb-3 mb-lg-0">
+          <div className="col-lg-1 col-md-3 mb-3 mb-lg-0">
             <p className="footer-brand mb-0">OpenKineticsPredictor</p>
           </div>
-
           {/* Column 2: Funding Information */}
-          <div className="col">
+          <div className="col p-1">
             <div className="d-flex justify-content-center justify-content-lg-end align-items-center">
               <p className="funding-text mb-0">
                 EU Horizon Europe (#101080997)
