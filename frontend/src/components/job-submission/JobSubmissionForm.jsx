@@ -59,6 +59,8 @@ export default function JobSubmissionForm() {
               csvFormatInfo={state.csvFormatInfo}
               useExperimental={state.useExperimental}
               setUseExperimental={state.setUseExperimental}
+              canonicalizeSubstrates={state.canonicalizeSubstrates}
+              setCanonicalizeSubstrates={state.setCanonicalizeSubstrates}
               onSubmit={state.submitJob}
               isSubmitting={state.isSubmitting}
               allSelectedTargetsHaveMethods={state.allSelectedTargetsHaveMethods}

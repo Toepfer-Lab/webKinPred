@@ -3,6 +3,7 @@ import PropTypes from 'prop-types';
 import { Card, Row, Col, Form, Button } from 'react-bootstrap';
 import MethodDetails from './MethodDetails';
 import ExperimentalSwitch from './ExperimentalSwitch';
+import CanonicalizationSwitch from './CanonicalizationSwitch';
 import '../../../styles/components/PredictionTypeSelect.css';
 
 const TARGET_ORDER = ['kcat', 'Km', 'kcat/Km'];
@@ -22,6 +23,8 @@ export default function MethodPicker({
   csvFormatInfo,
   useExperimental,
   setUseExperimental,
+  canonicalizeSubstrates,
+  setCanonicalizeSubstrates,
   onSubmit,
   isSubmitting,
   allSelectedTargetsHaveMethods,
@@ -70,7 +73,11 @@ export default function MethodPicker({
       </Card.Body>
 
       {visibleTargets.length > 0 && (
-        <Card.Footer className="d-flex justify-content-end align-items-center">
+        <Card.Footer className="d-flex justify-content-end align-items-center gap-3 flex-wrap">
+          <CanonicalizationSwitch
+            checked={canonicalizeSubstrates}
+            onChange={setCanonicalizeSubstrates}
+          />
           <ExperimentalSwitch checked={useExperimental} onChange={setUseExperimental} />
           <Button
             className="kave-btn ms-3"
@@ -94,6 +101,8 @@ MethodPicker.propTypes = {
   csvFormatInfo: PropTypes.object,
   useExperimental: PropTypes.bool.isRequired,
   setUseExperimental: PropTypes.func.isRequired,
+  canonicalizeSubstrates: PropTypes.bool.isRequired,
+  setCanonicalizeSubstrates: PropTypes.func.isRequired,
   onSubmit: PropTypes.func.isRequired,
   isSubmitting: PropTypes.bool.isRequired,
   allSelectedTargetsHaveMethods: PropTypes.bool.isRequired,

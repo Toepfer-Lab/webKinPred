@@ -19,7 +19,7 @@ from api.prediction_engines.runtime_paths import (
     PREDICTION_SCRIPTS,
     PYTHON_PATHS,
 )
-from api.utils.convert_to_mol import convert_to_mol
+from api.utils.convert_to_mol import convert_to_mol, substrate_as_smiles
 from webKinPred.settings import MEDIA_ROOT
 
 _AMINO_ACIDS = set("ACDEFGHIKLMNPQRSTVWY")
@@ -29,6 +29,7 @@ def dlkcat_predictions(
     sequences: list[str],
     public_id: str,
     substrates: list[str],
+    canonicalize_substrates: bool = True,
     **kwargs,
 ) -> tuple[list, dict[int, str]]:
     """
@@ -97,11 +98,17 @@ def dlkcat_predictions(
         elif mol is None:
             reason = "Invalid substrate (not a valid SMILES or InChI)"
         else:
-            mol_with_h = Chem.AddHs(mol)
-            smiles = Chem.MolToSmiles(mol_with_h)
-            if "." in smiles:
+            if len(Chem.GetMolFrags(mol)) > 1:
                 reason = "Substrate contains multiple disconnected fragments and cannot be processed"
             else:
+                if canonicalize_substrates:
+                    smiles = Chem.MolToSmiles(Chem.AddHs(mol))
+                else:
+                    smiles = substrate_as_smiles(
+                        substrate,
+                        canonicalize=False,
+                        preserve_raw_smiles_when_possible=True,
+                    )
                 valid_smiles.append(smiles)
                 valid_sequences.append(seq)
                 valid_indices.append(idx)

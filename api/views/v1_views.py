@@ -36,6 +36,7 @@ from api.services.job_service import process_job_submission_from_params
 from api.services.validation_service import validate_input_file
 from api.services.similarity_service import analyze_sequence_similarity
 from api.utils.api_auth import require_api_key
+from api.utils.job_utils import coerce_bool_param
 from api.utils.quotas import get_quota_usage
 
 
@@ -212,6 +213,7 @@ def api_submit_job(request):
                                              to method key
          handleLongSequences   (optional, default "truncate") — "truncate" or "skip"
          useExperimental       (optional, default "false")   — "true" or "false"
+         canonicalizeSubstrates (optional, default "true")  — "true" or "false"
 
     2. application/json — send data directly as a JSON body:
          {
@@ -219,6 +221,7 @@ def api_submit_job(request):
            "methods": {"kcat": "DLKcat"},
            "handleLongSequences": "truncate",
            "useExperimental": false,
+           "canonicalizeSubstrates": true,
            "data": [
              {"Protein Sequence": "MKTL...", "Substrate": "CC(=O)O"},
              ...
@@ -288,7 +291,14 @@ def _parse_multipart_body(request):
         "targets": [],
         "methods": {},
         "handle_long_sequences": request.POST.get("handleLongSequences", "truncate"),
-        "use_experimental": request.POST.get("useExperimental", "false").lower() == "true",
+        "use_experimental": coerce_bool_param(
+            request.POST.get("useExperimental"),
+            default=False,
+        ),
+        "canonicalize_substrates": coerce_bool_param(
+            request.POST.get("canonicalizeSubstrates"),
+            default=True,
+        ),
     }
 
     targets_raw = request.POST.get("targets", "")
@@ -357,7 +367,14 @@ def _parse_json_body(request):
         "targets": body.get("targets", []),
         "methods": body.get("methods", {}),
         "handle_long_sequences": body.get("handleLongSequences", "truncate"),
-        "use_experimental": bool(body.get("useExperimental", False)),
+        "use_experimental": coerce_bool_param(
+            body.get("useExperimental"),
+            default=False,
+        ),
+        "canonicalize_substrates": coerce_bool_param(
+            body.get("canonicalizeSubstrates"),
+            default=True,
+        ),
     }
 
     return csv_bytes, params, None

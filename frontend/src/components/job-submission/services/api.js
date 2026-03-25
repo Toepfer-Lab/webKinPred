@@ -58,6 +58,7 @@ export async function submitJob({
   file,
   handleLongSequences,
   useExperimental,
+  canonicalizeSubstrates,
 }) {
   const formData = new FormData();
   formData.append('targets', JSON.stringify(targets || []));
@@ -65,6 +66,7 @@ export async function submitJob({
   formData.append('file', file);
   formData.append('handleLongSequences', handleLongSequences);
   formData.append('useExperimental', useExperimental);
+  formData.append('canonicalizeSubstrates', canonicalizeSubstrates);
   const { data } = await apiClient.post('/submit-job/', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });

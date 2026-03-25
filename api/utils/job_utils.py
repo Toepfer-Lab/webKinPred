@@ -13,6 +13,21 @@ TARGET_ORDER = ["kcat", "Km", "kcat/Km"]
 VALID_TARGETS = set(TARGET_ORDER)
 
 
+def coerce_bool_param(value: Any, default: bool = False) -> bool:
+    """
+    Coerce common HTML/JSON boolean representations to a Python bool.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
 def canonicalise_targets(targets: List[str]) -> List[str]:
     """
     Return deduplicated targets in canonical display/execution order.
@@ -284,7 +299,14 @@ def extract_job_parameters_from_request(request) -> Dict[str, Any]:
         methods = {}
 
     return {
-        "use_experimental": request.POST.get("useExperimental") == "true",
+        "use_experimental": coerce_bool_param(
+            request.POST.get("useExperimental"),
+            default=False,
+        ),
+        "canonicalize_substrates": coerce_bool_param(
+            request.POST.get("canonicalizeSubstrates"),
+            default=True,
+        ),
         "targets": targets if isinstance(targets, list) else [],
         "methods": methods if isinstance(methods, dict) else {},
         "handle_long_sequences": request.POST.get("handleLongSequences", "truncate"),

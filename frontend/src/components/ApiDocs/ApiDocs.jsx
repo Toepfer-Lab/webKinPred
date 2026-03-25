@@ -140,6 +140,7 @@ with open("input.csv", "rb") as f:
             "targets":             '["kcat"]',
             "methods":             '{"kcat":"DLKcat"}',
             "handleLongSequences": "truncate",
+            "canonicalizeSubstrates": "true",
         },
     )
 print(resp.json())`,
@@ -152,7 +153,8 @@ print(resp.json())`,
   -F "file=@input.csv" \\
   -F 'targets=["kcat"]' \\
   -F 'methods={"kcat":"DLKcat"}' \\
-  -F "handleLongSequences=truncate"`,
+  -F "handleLongSequences=truncate" \\
+  -F "canonicalizeSubstrates=true"`,
   },
 ];
 
@@ -232,6 +234,7 @@ with open("input.csv", "rb") as f:
             "methods":             '{"kcat":"DLKcat"}',
             "handleLongSequences": "truncate",
             "useExperimental":     "true",
+            "canonicalizeSubstrates": "true",
         },
     )
 response.raise_for_status()
@@ -276,7 +279,8 @@ JOB=$(curl -s -X POST "$BASE/submit/" \\
   -F 'targets=["kcat"]' \\
   -F 'methods={"kcat":"DLKcat"}' \\
   -F "handleLongSequences=truncate" \\
-  -F "useExperimental=true")
+  -F "useExperimental=true" \\
+  -F "canonicalizeSubstrates=true")
 
 JOB_ID=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin)['jobId'])")
 echo "Job submitted → $JOB_ID"
@@ -314,6 +318,7 @@ response = requests.post(
         "methods":             {"kcat": "DLKcat"},
         "handleLongSequences": "truncate",
         "useExperimental":     True,
+        "canonicalizeSubstrates": True,
         "data": [
             {"Protein Sequence": "MKTLLIFAGFCLAGLSLTPVAHA...", "Substrate": "CC(=O)O"},
             {"Protein Sequence": "MGSSHHHHHHSSGLVPRGSH...",   "Substrate": "C1CCCCC1"},
@@ -614,6 +619,11 @@ export default function ApiDocs() {
                   <tr>
                     <td><code>useExperimental</code></td>
                     <td>No (default: <code>false</code>)</td>
+                    <td><code>true</code> · <code>false</code></td>
+                  </tr>
+                  <tr>
+                    <td><code>canonicalizeSubstrates</code></td>
+                    <td>No (default: <code>true</code>)</td>
                     <td><code>true</code> · <code>false</code></td>
                   </tr>
                 </tbody>

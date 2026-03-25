@@ -238,6 +238,39 @@ def get_maccs(smiles_list: list[str]) -> np.ndarray:
     return np.stack(fps).astype(np.float32)
 
 
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _resolve_substrate_text(
+    value: object,
+    *,
+    canonicalize_substrates: bool = True,
+) -> str | None:
+    text = str(value).strip()
+    if not text:
+        return None
+
+    mol_from_smiles = Chem.MolFromSmiles(text)
+    if mol_from_smiles is not None:
+        if not canonicalize_substrates:
+            return text
+        return Chem.MolToSmiles(mol_from_smiles)
+
+    mol = Chem.MolFromInchi(text)
+    if mol is None:
+        return None
+    return Chem.MolToSmiles(mol, canonical=canonicalize_substrates)
+
+
 def _build_model(task_type: str, device: torch.device):
     if task_type == "KCAT":
         model = KcatModel(device=str(device))
@@ -387,6 +420,10 @@ def run_from_payload(payload: dict) -> dict:
         raise RuntimeError(f"seqmap DB not found: {seqmap_db}")
 
     kinetics_type = _kinetics_type_from_payload(payload)
+    canonicalize_substrates = _coerce_bool(
+        (payload.get("params") or {}).get("canonicalize_substrates"),
+        default=True,
+    )
 
     predictions: list[float | None] = [None] * len(rows)
     invalid_indices: list[int] = []
@@ -396,17 +433,16 @@ def run_from_payload(payload: dict) -> dict:
 
     for idx, row in enumerate(rows):
         seq = str(row.get("sequence", "")).strip()
-        substrate = row.get("substrates", row.get("substrate", ""))
-        substrate = str(substrate).strip()
-        mol = Chem.MolFromSmiles(substrate)
-        if not mol:
-            mol = Chem.MolFromInchi(substrate)
-        if not seq or mol is None:
+        substrate = _resolve_substrate_text(
+            row.get("substrates", row.get("substrate", "")),
+            canonicalize_substrates=canonicalize_substrates,
+        )
+        if not seq or substrate is None:
             invalid_indices.append(idx)
             continue
         valid_indices.append(idx)
         valid_sequences.append(seq)
-        valid_smiles.append(Chem.MolToSmiles(mol))
+        valid_smiles.append(substrate)
 
     if valid_indices:
         valid_preds = run_catapro(

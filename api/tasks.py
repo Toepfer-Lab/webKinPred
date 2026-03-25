@@ -56,6 +56,7 @@ def run_prediction(
     method_key: str,
     target: str,
     experimental_results: list | None = None,
+    canonicalize_substrates: bool = True,
 ) -> None:
     """
     Run a single-target prediction job.
@@ -79,7 +80,14 @@ def run_prediction(
 
     try:
         df = _load_input(job)
-        _execute_prediction(job, desc, df, target, experimental_results or [])
+        _execute_prediction(
+            job,
+            desc,
+            df,
+            target,
+            experimental_results or [],
+            canonicalize_substrates=canonicalize_substrates,
+        )
         Job.objects.filter(pk=job.pk).update(
             status="Completed",
             completion_time=timezone.now(),
@@ -109,6 +117,7 @@ def run_both_prediction(
     kcat_key: str,
     km_key: str,
     experimental_results: list | None = None,
+    canonicalize_substrates: bool = True,
 ) -> None:
     """
     Run a dual-target prediction job (kcat and KM in sequence).
@@ -136,7 +145,12 @@ def run_both_prediction(
     try:
         df = _load_input(job)
         _execute_both_prediction(
-            job, kcat_desc, km_desc, df, experimental_results or []
+            job,
+            kcat_desc,
+            km_desc,
+            df,
+            experimental_results or [],
+            canonicalize_substrates=canonicalize_substrates,
         )
         Job.objects.filter(pk=job.pk).update(
             status="Completed",
@@ -168,6 +182,7 @@ def run_multi_prediction(
     targets: list[str],
     methods: dict[str, str],
     experimental_results: dict | None = None,
+    canonicalize_substrates: bool = True,
 ) -> None:
     """
     Run a multi-target prediction job.
@@ -218,6 +233,7 @@ def run_multi_prediction(
             desc_by_target=desc_by_target,
             df=df,
             experimental_results=experimental_results or {},
+            canonicalize_substrates=canonicalize_substrates,
         )
         Job.objects.filter(pk=job.pk).update(
             status="Completed",
@@ -254,6 +270,7 @@ def _execute_prediction(
     df: pd.DataFrame,
     target: str,
     experimental_results: list,
+    canonicalize_substrates: bool = True,
 ) -> None:
     """
     Run a single-target prediction and write output.csv.
@@ -305,6 +322,7 @@ def _execute_prediction(
             sequences=sequences_proc,
             public_id=job.public_id,
             target=target,
+            canonicalize_substrates=canonicalize_substrates,
             **call_kwargs,
         )
         for global_i, pred in zip(valid_idx, pred_subset):
@@ -353,6 +371,7 @@ def _execute_both_prediction(
     km_desc,
     df: pd.DataFrame,
     experimental_results: list,
+    canonicalize_substrates: bool = True,
 ) -> None:
     """
     Run kcat and KM predictions in sequence and write a combined output.csv.
@@ -407,6 +426,7 @@ def _execute_both_prediction(
             sequences=sequences_proc,
             public_id=job.public_id,
             target="kcat",
+            canonicalize_substrates=canonicalize_substrates,
             **kcat_call_kwargs,
         )
         for global_i, pred in zip(valid_idx, kcat_subset):
@@ -453,6 +473,7 @@ def _execute_both_prediction(
                 sequences=aug_df["sequence"].tolist(),
                 public_id=job.public_id,
                 target="Km",
+                canonicalize_substrates=canonicalize_substrates,
                 **km_call_kwargs,
             )
             # Group predictions back by original row index
@@ -478,6 +499,7 @@ def _execute_both_prediction(
                 sequences=sequences_proc,
                 public_id=job.public_id,
                 target="Km",
+                canonicalize_substrates=canonicalize_substrates,
                 **km_call_kwargs,
             )
             for global_i, pred in zip(valid_idx, km_subset):
@@ -555,6 +577,7 @@ def _execute_multi_prediction(
     desc_by_target: dict,
     df: pd.DataFrame,
     experimental_results: dict[str, list],
+    canonicalize_substrates: bool = True,
 ) -> None:
     """
     Run one or more prediction targets and write a combined output.csv.
@@ -646,6 +669,7 @@ def _execute_multi_prediction(
                 sequences=aug_df["sequence"].tolist(),
                 public_id=job.public_id,
                 target=target,
+                canonicalize_substrates=canonicalize_substrates,
                 **call_kwargs,
             )
 
@@ -673,6 +697,7 @@ def _execute_multi_prediction(
             sequences=sequences_proc,
             public_id=job.public_id,
             target=target,
+            canonicalize_substrates=canonicalize_substrates,
             **call_kwargs,
         )
 
@@ -769,6 +794,7 @@ def _invoke_method_prediction(
     sequences: list[str],
     public_id: str,
     target: str,
+    canonicalize_substrates: bool = True,
     **call_kwargs,
 ) -> tuple[list, dict[int, str]]:
     """
@@ -780,6 +806,9 @@ def _invoke_method_prediction(
     Always returns (predictions, invalid_reasons) where invalid_reasons maps
     local indices (into sequences) to human-readable skip reasons.
     """
+    call_kwargs = dict(call_kwargs)
+    call_kwargs.setdefault("canonicalize_substrates", canonicalize_substrates)
+
     if desc.pred_func is not None:
         preds, invalid_result = desc.pred_func(
             sequences=sequences,

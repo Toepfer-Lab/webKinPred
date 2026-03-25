@@ -31,6 +31,7 @@ export default function useJobSubmission() {
   const [csvFile, setCsvFile] = useState(null);
   const [fileName, setFileName] = useState('No file chosen');
   const [useExperimental, setUseExperimental] = useState(false);
+  const [canonicalizeSubstrates, setCanonicalizeSubstrates] = useState(true);
   const [handleLongSeqs, setHandleLongSeqs] = useState('truncate');
 
   // Derived server feedback
@@ -275,6 +276,7 @@ export default function useJobSubmission() {
         file: csvFile,
         handleLongSequences: handleLongSeqs,
         useExperimental,
+        canonicalizeSubstrates,
       });
       setSubmissionResult((prev) => ({
         ...prev,
@@ -314,6 +316,8 @@ export default function useJobSubmission() {
     csvParsing,
     useExperimental,
     setUseExperimental,
+    canonicalizeSubstrates,
+    setCanonicalizeSubstrates,
     handleLongSeqs,
     setHandleLongSeqs,
     similarityData,

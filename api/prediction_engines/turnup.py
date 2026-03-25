@@ -3,8 +3,8 @@
 # Prediction engine for the TurNup model.
 #
 # Wraps the TurNup prediction script in a subprocess call.  Handles
-# multi-substrate/multi-product molecule validation, InChI conversion,
-# progress reporting, and user-friendly error messages.
+# multi-substrate/multi-product molecule validation, optional substrate
+# canonicalization, progress reporting, and user-friendly error messages.
 
 import os
 import subprocess
@@ -21,7 +21,7 @@ from api.prediction_engines.runtime_paths import (
     PREDICTION_SCRIPTS,
     PYTHON_PATHS,
 )
-from api.utils.convert_to_mol import convert_to_mol
+from api.utils.convert_to_mol import convert_to_mol, validated_molecule_text
 from webKinPred.settings import MEDIA_ROOT
 
 _AMINO_ACIDS = set("ACDEFGHIKLMNPQRSTVWY")
@@ -32,6 +32,7 @@ def turnup_predictions(
     public_id: str,
     substrates: list[str],
     products: list[str],
+    canonicalize_substrates: bool = True,
     **kwargs,
 ) -> tuple[list, dict[int, str]]:
     """
@@ -88,8 +89,8 @@ def turnup_predictions(
 
     valid_indices: list[int] = []
     invalid_reasons: dict[int, str] = {}
-    valid_sub_inchis: list[str] = []
-    valid_prod_inchis: list[str] = []
+    valid_sub_values: list[str] = []
+    valid_prod_values: list[str] = []
     valid_sequences: list[str] = []
     predictions: list = [None] * len(sequences)
 
@@ -117,10 +118,20 @@ def turnup_predictions(
             invalid_reasons[idx] = reason
             job.invalid_rows += 1
         else:
-            sub_inchi = ";".join(Chem.MolToInchi(mol) for mol in sub_mols)
-            prod_inchi = ";".join(Chem.MolToInchi(mol) for mol in prod_mols)
-            valid_sub_inchis.append(sub_inchi)
-            valid_prod_inchis.append(prod_inchi)
+            if canonicalize_substrates:
+                sub_value = ";".join(Chem.MolToInchi(mol) for mol in sub_mols)
+                prod_value = ";".join(Chem.MolToInchi(mol) for mol in prod_mols)
+            else:
+                sub_value = ";".join(
+                    validated_molecule_text(token) or ""
+                    for token in sub_tokens
+                )
+                prod_value = ";".join(
+                    validated_molecule_text(token) or ""
+                    for token in prod_tokens
+                )
+            valid_sub_values.append(sub_value)
+            valid_prod_values.append(prod_value)
             valid_sequences.append(seq)
             valid_indices.append(idx)
 
@@ -135,8 +146,8 @@ def turnup_predictions(
     # ── Write CSV input file ──────────────────────────────────────────────────
     try:
         df_input = pd.DataFrame({
-            "Substrates": valid_sub_inchis,
-            "Products": valid_prod_inchis,
+            "Substrates": valid_sub_values,
+            "Products": valid_prod_values,
             "Protein Sequence": valid_sequences,
         })
         df_input.to_csv(input_file, index=False)

@@ -10,7 +10,6 @@ import subprocess
 
 import numpy as np
 import pandas as pd
-from rdkit import Chem
 
 from api.methods.base import PredictionError
 from api.models import Job
@@ -20,7 +19,7 @@ from api.prediction_engines.runtime_paths import (
     PREDICTION_SCRIPTS,
     PYTHON_PATHS,
 )
-from api.utils.convert_to_mol import convert_to_mol
+from api.utils.convert_to_mol import convert_to_mol, substrate_as_smiles
 from webKinPred.settings import MEDIA_ROOT
 
 _AMINO_ACIDS = set("ACDEFGHIKLMNPQRSTVWY")
@@ -31,6 +30,7 @@ def unikp_predictions(
     public_id: str,
     substrates: list[str],
     kinetics_type: str = "KCAT",
+    canonicalize_substrates: bool = True,
     **kwargs,
 ) -> tuple[list, dict[int, str]]:
     """
@@ -96,7 +96,13 @@ def unikp_predictions(
         mol = convert_to_mol(substrate)
 
         if mol and seq_valid:
-            valid_smiles.append(Chem.MolToSmiles(mol))
+            valid_smiles.append(
+                substrate_as_smiles(
+                    substrate,
+                    canonicalize=canonicalize_substrates,
+                    preserve_raw_smiles_when_possible=True,
+                )
+            )
             valid_sequences.append(seq)
             valid_indices.append(idx)
         else:

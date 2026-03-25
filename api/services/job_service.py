@@ -75,6 +75,7 @@ def process_job_submission_from_params(
                       methods              – e.g. {"kcat":"DLKcat","Km":"UniKP"}
                       handle_long_sequences– "truncate" or "skip"
                       use_experimental     – bool
+                      canonicalize_substrates – bool
         file:       A file-like object (Django InMemoryUploadedFile or
                     io.BytesIO) containing the CSV data.
         ip_address: The IP address to charge quota against.
@@ -237,11 +238,20 @@ def dispatch_prediction_task(
     """
     targets = params["targets"]
     methods = params["methods"]
+    canonicalize_substrates = params.get("canonicalize_substrates", True)
 
     print(
-        f"Dispatching multi-target task: targets={targets}, methods={methods}"
+        "Dispatching multi-target task: "
+        f"targets={targets}, methods={methods}, "
+        f"canonicalize_substrates={canonicalize_substrates}"
     )
-    run_multi_prediction.delay(public_id, targets, methods, experimental_results or {})
+    run_multi_prediction.delay(
+        public_id,
+        targets,
+        methods,
+        experimental_results or {},
+        canonicalize_substrates,
+    )
 
 
 def get_job_status_data(job: Job) -> Dict[str, Any]:
