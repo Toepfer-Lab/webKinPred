@@ -24,6 +24,14 @@ function Footer() {
                 Swiss SERI (#23.00232)
                 &ensp;·&ensp;
                 UKRI (#10083717 &amp; #10080153)
+                &ensp;·&ensp;
+                FNR (PRIDE21/16763386/CANBIO2)
+                &ensp;·&ensp;
+                Novo Nordisk Foundation (#NNF10CC1016517)
+                &ensp;·&ensp;
+                Knut and Alice Wallenberg Foundation
+                &ensp;·&ensp;
+                EU Horizon 2020 (#686070 &amp; #814650)
               </p>
               <div className="footer-logos">
                 <a href="https://www.recon4imd.org/" target="_blank" rel="noopener noreferrer">
