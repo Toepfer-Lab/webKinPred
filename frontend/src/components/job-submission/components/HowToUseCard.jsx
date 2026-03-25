@@ -1,7 +1,7 @@
 // src/components/HowToUseCard.js
 
 import React from 'react';
-import { Card, Row, Col, Alert, ListGroup, Button } from 'react-bootstrap';
+import { Card, Row, Col, Alert, Button } from 'react-bootstrap';
 import { BoxArrowInDown, Bullseye, CloudUpload, Cpu, Github } from 'react-bootstrap-icons';
 import '../../../styles/components/HowToUseCard.css';
 
@@ -112,50 +112,51 @@ export default function HowToUseCard({ methods = {} }) {
             </Col>
           ))}
         </Row>
-
-        <hr className="my-4" />
-        <h4 className="text-center mb-4">Input Data Format</h4>
-        <Row>
-          <Col md={6} className="mb-3">
-            <Card className="h-100 format-card">
-              <Card.Body>
-                <Card.Title>Single-Substrate Models</Card.Title>
-                <Card.Subtitle className="mb-2 text-white-70">
-                  DLKcat, EITLEM, UniKP, KinForm-H, KinForm-L, CataPro
-                </Card.Subtitle>
-                <ListGroup variant="flush">
-                  <ListGroup.Item>
-                    <span className="csv-col">Protein Sequence</span> — Full amino-acid sequence.
-                  </ListGroup.Item>
-                  <ListGroup.Item>
-                    <span className="csv-col">Substrate</span> — One <code>SMILES</code> or <code>InChI</code> string.
-                  </ListGroup.Item>
-                </ListGroup>
-              </Card.Body>
-            </Card>
-          </Col>
-          <Col md={6} className="mb-3">
-            <Card className="h-100 format-card">
-              <Card.Body>
-                <Card.Title>Multi-Substrate Model</Card.Title>
-                <Card.Subtitle className="mb-2 text-white-70">TurNup</Card.Subtitle>
-                <ListGroup variant="flush">
-                  <ListGroup.Item>
-                    <span className="csv-col">Protein Sequence</span> — Full amino-acid sequence.
-                  </ListGroup.Item>
-                  <ListGroup.Item>
-                    <span className="csv-col">Substrates</span> — Semicolon-separated list of <code>SMILES</code> or <code>InChI</code>.
-                  </ListGroup.Item>
-                  <ListGroup.Item>
-                    <span className="csv-col">Products</span> — Semicolon-separated list of <code>SMILES</code> or <code>InChI</code>.
-                  </ListGroup.Item>
-                </ListGroup>
-              </Card.Body>
-            </Card>
-          </Col>
-        </Row>
-        <p className="text-center text-white-70">
-          Multi-substrate CSVs can also be used for K<sub>M</sub> predictions. Each entry in the 'Substrates' column will receive its own K<sub>M</sub> value (separated by semicolons).
+        <p className="format-section-label my-2">Input Data Format</p>
+        <div className="d-flex gap-3 flex-column flex-md-row">
+          <div className="format-panel flex-fill">
+            <div className="format-panel-title">Single-Substrate</div>
+            <div className="format-panel-models">DLKcat · EITLEM · UniKP · KinForm-H · KinForm-L · CataPro</div>
+            <div className="format-fields">
+              <div className="format-header-row">
+                <span className="format-header">Column</span>
+                <span className="format-header">Expected content</span>
+              </div>
+              <div className="format-row">
+                <span className="format-chip">Protein Sequence</span>
+                <span className="format-desc">Full amino-acid sequence</span>
+              </div>
+              <div className="format-row">
+                <span className="format-chip">Substrate</span>
+                <span className="format-desc">One <code>SMILES</code> or <code>InChI</code> string</span>
+              </div>
+            </div>
+          </div>
+          <div className="format-panel flex-fill">
+            <div className="format-panel-title">Multi-Substrate <span className="format-panel-model">· TurNup</span></div>
+            <div className="format-panel-models">&nbsp;</div>
+            <div className="format-fields">
+              <div className="format-header-row">
+                <span className="format-header">Column</span>
+                <span className="format-header">Expected content</span>
+              </div>
+              <div className="format-row">
+                <span className="format-chip">Protein Sequence</span>
+                <span className="format-desc">Full amino-acid sequence</span>
+              </div>
+              <div className="format-row">
+                <span className="format-chip">Substrates</span>
+                <span className="format-desc">Semicolon-separated <code>SMILES</code> or <code>InChI</code></span>
+              </div>
+              <div className="format-row">
+                <span className="format-chip">Products</span>
+                <span className="format-desc">Semicolon-separated <code>SMILES</code> or <code>InChI</code></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p className="format-note mt-2">
+          Multi-substrate CSVs can also be used for K<sub>M</sub> predictions. Each 'Substrates' entry receives its own K<sub>M</sub> value (semicolon-separated).
         </p>
 
         <hr className="my-4" />

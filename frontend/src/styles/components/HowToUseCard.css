@@ -16,20 +16,97 @@
   margin-bottom: 1rem;
 }
 
-.format-card {
-  border-color: rgba(0, 0, 0, 0.1);
+.format-section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 0.6rem;
 }
 
-.csv-col {
-  display: inline-block;
-  background-color: #e9ecef;
-  color: #495057;
-  padding: 0.1rem 0.5rem;
-  border-radius: 0.25rem;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
-  font-size: 0.85em;
+.format-panel {
+  background: rgba(24, 22, 50, 0.74);
+  border: 1px solid rgba(233, 233, 233, 0.15);
+  border-radius: 7px;
+  padding: 0.75rem 1rem;
+}
+
+.format-panel-title {
+  font-size: 0.82rem;
   font-weight: 600;
-  margin-right: 0.5em;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 0.2rem;
+}
+
+.format-panel-model {
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.format-panel-models {
+  font-size: 0.71rem;
+  color: rgba(255, 255, 255, 0.38);
+  margin-bottom: 0.6rem;
+}
+
+.format-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.format-header-row {
+  display: flex;
+  gap: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 0.1rem;
+}
+
+.format-header {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  flex: 1;
+}
+
+.format-header:first-child {
+  flex: 0 0 auto;
+  min-width: 110px;
+}
+
+.format-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.format-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.format-desc {
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.3;
+}
+
+.format-note {
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.38);
+  text-align: center;
 }
 
 /* Method Cards Styling */
