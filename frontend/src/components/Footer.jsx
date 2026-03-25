@@ -14,7 +14,7 @@ function Footer() {
           </div>
 
           {/* Column 2: Funding Information */}
-          <div className="col-lg-8 col-md-12">
+          <div className="col">
             <div className="d-flex justify-content-center justify-content-lg-end align-items-center">
               <p className="funding-text mb-0">
                 EU Horizon Europe (#101080997)
