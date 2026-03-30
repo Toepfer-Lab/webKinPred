@@ -1,6 +1,8 @@
 // src/components/Footer.js
 import React from 'react';
 import '../styles/components/Footer.css';
+import recon4Logo from '../assets/recon4imd_logo.png';
+import euLogo from '../assets/eu_logo.png';
 
 const funders = [
   { name: 'EU Horizon Europe', grant: '#101080997' },
@@ -22,7 +24,7 @@ function Footer() {
           {/* Brand */}
           <p className="footer-brand mb-0">OpenKineticsPredictor</p>
 
-          {/* Funding */}
+          {/* Funding badges */}
           <div className="funding-section">
             <span className="funding-label">Funded by</span>
             <div className="funding-badges">
@@ -33,6 +35,16 @@ function Footer() {
                 </span>
               ))}
             </div>
+          </div>
+
+          {/* Partner logos */}
+          <div className="footer-logos">
+            <a href="http://recon4imd.org/" target="_blank" rel="noopener noreferrer">
+              <img src={recon4Logo} alt="Recon4IMD" className="footer-logo footer-logo--recon4" />
+            </a>
+            <a href="https://cordis.europa.eu/project/id/101080997" target="_blank" rel="noopener noreferrer">
+              <img src={euLogo} alt="Co-funded by the European Union" className="footer-logo footer-logo--eu" />
+            </a>
           </div>
 
         </div>
