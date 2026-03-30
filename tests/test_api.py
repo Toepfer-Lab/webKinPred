@@ -31,9 +31,9 @@ DEFAULT_KEY  = "ak_17f90e7c1f6ac3f5fc861d8cec4667a2b888c358a333bb81f75b631a9b500
 # ---------------------------------------------------------------------------
 
 # kcat-capable methods
-KCAT_METHOD_IDS = ["DLKcat", "TurNup", "EITLEM", "UniKP", "KinForm-H", "KinForm-L", "CataPro"]
+KCAT_METHOD_IDS = ["DLKcat", "TurNup", "EITLEM", "UniKP", "KinForm-H", "KinForm-L", "CataPro", "CatPred"]
 # Km-capable methods
-KM_METHOD_IDS   = ["EITLEM", "UniKP", "KinForm-H", "CataPro"]
+KM_METHOD_IDS   = ["EITLEM", "UniKP", "KinForm-H", "CataPro", "CatPred"]
 # kcat/Km-capable methods
 KCAT_KM_METHOD_IDS = ["CataPro"]
 # All recognised method IDs (de-duplicated, lowercase)
@@ -200,10 +200,12 @@ def test_methods(base: str, methods: set) -> None:
     if sel(methods, "UniKP"):    check("UniKP in kcat methods",   "UniKP"     in kcat_ids)
     if sel(methods, "KinForm-H"): check("KinForm-H in kcat",      "KinForm-H" in kcat_ids)
     if sel(methods, "KinForm-L"): check("KinForm-L in kcat",      "KinForm-L" in kcat_ids)
+    if sel(methods, "CatPred"):  check("CatPred in kcat methods", "CatPred"   in kcat_ids)
     km_ids = {m["id"] for m in j.get("methods", {}).get("Km", [])}
     if sel(methods, "EITLEM"):   check("EITLEM in Km methods",    "EITLEM"    in km_ids)
     if sel(methods, "UniKP"):    check("UniKP in Km methods",     "UniKP"     in km_ids)
     if sel(methods, "KinForm-H"): check("KinForm-H in Km methods", "KinForm-H" in km_ids)
+    if sel(methods, "CatPred"):  check("CatPred in Km methods",   "CatPred"   in km_ids)
     ratio_ids = {m["id"] for m in j.get("methods", {}).get("kcat/Km", [])}
     if sel(methods, "CataPro"):  check("CataPro in kcat/Km methods", "CataPro" in ratio_ids)
     check("has longSequenceOptions", "longSequenceOptions" in j)
