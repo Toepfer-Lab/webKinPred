@@ -1,40 +1,99 @@
 /* src/components/Footer.css */
 
 .custom-footer {
-  /* This property can handle images, gradients, and colors */
   background: linear-gradient(45deg, #070614, #181531, #12121f);
   color: rgba(255, 255, 255, 0.7);
-  padding: 1.5rem 1rem;
+  padding: 0.85rem 1.5rem;
   border-top: 1px solid var(--neon-color);
 }
 
+.footer-inner {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
 .footer-brand {
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 0.95rem;
+  font-weight: 700;
   color: #ffffff;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
 }
 
-.copyright-text {
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.5);
+/* Thin vertical divider between brand and funding */
+.footer-inner > .footer-brand::after {
+  content: '';
+  display: inline-block;
+  width: 1px;
+  height: 1.1em;
+  background: rgba(255, 255, 255, 0.2);
+  margin-left: 1.5rem;
+  vertical-align: middle;
 }
 
-.funding-text {
-  font-size: 0.85rem;
+.funding-section {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.funding-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.35);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.funding-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.funding-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+
+.badge-name {
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 500;
+}
+
+.badge-grant {
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 0.67rem;
 }
 
 .footer-logos {
   display: flex;
   align-items: center;
-  gap: 1rem; /* Creates space between the logos */
+  gap: 1rem;
 }
 
 .footer-logo {
-  height: 45px; /* Ensures both logos are the same size */
+  height: 45px;
   opacity: 0.5;
   transition: opacity 0.2s ease-in-out;
 }
 
 .footer-logo:hover {
-  opacity: 1; /* Full opacity on hover */
+  opacity: 1;
 }

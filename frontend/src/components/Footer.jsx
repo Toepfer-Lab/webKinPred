@@ -1,35 +1,37 @@
 // src/components/Footer.js
 import React from 'react';
 import '../styles/components/Footer.css';
+
+const funders = [
+  { name: 'EU Horizon Europe', grant: '#101080997' },
+  { name: 'Swiss SERI', grant: '#23.00232' },
+  { name: 'UKRI', grant: '#10083717 & #10080153' },
+  { name: 'FNR', grant: 'PRIDE21/16763386/CANBIO2' },
+  { name: 'Novo Nordisk Foundation', grant: '#NNF10CC1016517' },
+  { name: 'Knut & Alice Wallenberg Foundation', grant: null },
+  { name: 'EU Horizon 2020', grant: '#686070 & #814650' },
+  { name: 'National Key R&D China', grant: '2025YFA0922700' },
+];
+
 function Footer() {
   return (
     <footer className="custom-footer">
       <div className="container-fluid">
-        {/* A single row to align all content, stacking on small screens */}
-        <div className="row align-items-center text-center text-lg-start">
+        <div className="footer-inner">
 
-          {/* Column 1: App Name and Copyright */}
-          <div className="col-lg-1 col-md-3 mb-3 mb-lg-0">
-            <p className="footer-brand mb-0">OpenKineticsPredictor</p>
-          </div>
-          {/* Column 2: Funding Information */}
-          <div className="col p-1">
-            <div className="d-flex justify-content-center justify-content-lg-end align-items-center">
-              <p className="funding-text mb-0">
-                EU Horizon Europe (#101080997)
-                &ensp;·&ensp;
-                Swiss SERI (#23.00232)
-                &ensp;·&ensp;
-                UKRI (#10083717 &amp; #10080153)
-                &ensp;·&ensp;
-                FNR (PRIDE21/16763386/CANBIO2)
-                &ensp;·&ensp;
-                Novo Nordisk Foundation (#NNF10CC1016517)
-                &ensp;·&ensp;
-                Knut and Alice Wallenberg Foundation
-                &ensp;·&ensp;
-                EU Horizon 2020 (#686070 &amp; #814650)
-              </p>
+          {/* Brand */}
+          <p className="footer-brand mb-0">OpenKineticsPredictor</p>
+
+          {/* Funding */}
+          <div className="funding-section">
+            <span className="funding-label">Funded by</span>
+            <div className="funding-badges">
+              {funders.map(({ name, grant }) => (
+                <span key={name} className="funding-badge">
+                  <span className="badge-name">{name}</span>
+                  {grant && <span className="badge-grant">{grant}</span>}
+                </span>
+              ))}
             </div>
           </div>
 
