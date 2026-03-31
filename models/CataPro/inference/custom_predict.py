@@ -154,17 +154,20 @@ def get_prott5_embeddings(
     cache_dir.mkdir(parents=True, exist_ok=True)
     seq_ids = resolve_seq_ids_via_cli(sequences, seqmap_cli, seqmap_db)
 
-    missing = []
+    missing_by_seq_id: dict[str, tuple[str, Path]] = {}
     for seq, seq_id in zip(sequences, seq_ids):
         fp = cache_dir / f"{seq_id}.npy"
-        if not fp.exists():
-            missing.append((seq, seq_id, fp))
+        if fp.exists() or seq_id in missing_by_seq_id:
+            continue
+        # The shared ProtT5 cache is keyed by seq_id, so repeated sequences in
+        # the same request only need one embedding pass.
+        missing_by_seq_id[seq_id] = (seq, fp)
 
     tokenizer = None
     model = None
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    if missing:
+    if missing_by_seq_id:
         tokenizer = T5Tokenizer.from_pretrained(
             str(prott5_model_path),
             do_lower_case=False,
@@ -177,7 +180,7 @@ def get_prott5_embeddings(
         ).to(device)
         model.eval()
 
-        for seq, _sid, fp in missing:
+        for seq, fp in missing_by_seq_id.values():
             emb = _compute_prott5_mean_embedding(seq, tokenizer, model, device)
             np.save(fp, emb)
 
