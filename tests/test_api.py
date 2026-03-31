@@ -13,6 +13,7 @@ Usage:
 import argparse
 import io
 import json
+import math
 import sys
 import textwrap
 import time
@@ -161,6 +162,40 @@ def submit(base: str, headers: dict, csv_content: str,
         files={"file": csv_file(csv_content)},
         data=data,
     )
+
+
+def expected_kcat_similarity_columns(submitted: dict) -> tuple[str, str] | None:
+    """
+    Return expected similarity column names for kcat-target jobs, else None.
+    """
+    if submitted.get("prediction_type") != "kcat":
+        return None
+    method_key = submitted.get("kcat_method")
+    if not method_key:
+        return None
+    return (
+        f"mean similarity to {method_key} training data",
+        f"max similarity to {method_key} training data",
+    )
+
+
+def is_valid_similarity_cell(value) -> bool:
+    """
+    Similarity values are valid when blank/NaN or numeric in [0, 100].
+    """
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    if math.isnan(number):
+        return True
+    return 0.0 <= number <= 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +569,13 @@ def wait_for_terminal_status(
     return None
 
 
-def validate_completed_result(base: str, headers: dict, job_id: str, label: str) -> None:
+def validate_completed_result(
+    base: str,
+    headers: dict,
+    job_id: str,
+    label: str,
+    submitted: dict,
+) -> None:
     """Validate CSV and JSON result downloads for a completed job."""
     # CSV download
     r = requests.get(f"{base}/result/{job_id}/", headers=headers)
@@ -557,6 +598,35 @@ def validate_completed_result(base: str, headers: dict, job_id: str, label: str)
     check(f"[{label}] JSON has rowCount", isinstance(j.get("rowCount"), int))
     check(f"[{label}] JSON has data list", isinstance(j.get("data"), list))
     check(f"[{label}] rowCount matches data", j.get("rowCount") == len(j.get("data", [])))
+
+    expected_similarity_cols = expected_kcat_similarity_columns(submitted)
+    json_columns = j.get("columns", [])
+    if expected_similarity_cols:
+        mean_col, max_col = expected_similarity_cols
+        check(f"[{label}] has mean similarity column", mean_col in json_columns)
+        check(f"[{label}] has max similarity column", max_col in json_columns)
+        for idx, row in enumerate(j.get("data", []), start=1):
+            mean_value = row.get(mean_col)
+            max_value = row.get(max_col)
+            check(
+                f"[{label}] row {idx} mean similarity valid",
+                is_valid_similarity_cell(mean_value),
+                f"value={mean_value!r}",
+            )
+            check(
+                f"[{label}] row {idx} max similarity valid",
+                is_valid_similarity_cell(max_value),
+                f"value={max_value!r}",
+            )
+    else:
+        check(
+            f"[{label}] no mean similarity column",
+            all(not str(col).startswith("mean similarity to ") for col in json_columns),
+        )
+        check(
+            f"[{label}] no max similarity column",
+            all(not str(col).startswith("max similarity to ") for col in json_columns),
+        )
 
     if j.get("data"):
         first_row = j["data"][0]
@@ -589,7 +659,7 @@ def test_result_completed(base: str, headers: dict, submitted_jobs: list[dict],
         check(f"[{label}] final status is Completed", final_status == "Completed", f"got {final_status}")
         if final_status != "Completed":
             continue
-        validate_completed_result(base, headers, job_id, label)
+        validate_completed_result(base, headers, job_id, label, submitted)
 
 
 def test_validate(base: str, headers: dict) -> None:

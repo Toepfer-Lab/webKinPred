@@ -47,13 +47,14 @@ def build_prediction_scripts(base_path: str | Path) -> dict[str, str]:
     return {key: _join(base_path, rel) for key, rel in _PREDICTION_SCRIPT_REL.items()}
 
 
-def build_similarity_datasets(fastas_dir: str | Path) -> dict[str, dict[str, str]]:
+def build_similarity_datasets(fastas_dir: str | Path) -> dict[str, dict]:
     fastas_dir = str(Path(fastas_dir).resolve())
     return {
         label: {
             "label": label,
             "fasta": f"{fastas_dir}/{meta['fasta_filename']}",
             "target_db": f"{fastas_dir}/dbs/{meta['db_name']}",
+            "method_keys": list(meta.get("method_keys", [])),
         }
         for label, meta in SIMILARITY_DATASET_REGISTRY.items()
     }

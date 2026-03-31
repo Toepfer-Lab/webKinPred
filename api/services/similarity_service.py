@@ -3,8 +3,14 @@ Similarity analysis service that orchestrates the similarity workflow.
 """
 import tempfile
 import os
-from typing import List, Dict, Any
+import subprocess
+from typing import List, Dict, Any, Optional
+
+import pandas as pd
+
 from api.utils.similarity_utils import (
+    TMP_DIR,
+    _mmseqs_cmd,
     extract_protein_sequences_from_csv,
     create_unique_sequence_mapping,
     create_fasta_file,
@@ -151,3 +157,190 @@ def analyze_similarity_for_method(
         if result_file and os.path.exists(result_file):
             result_dir = os.path.dirname(result_file)
             cleanup_temporary_files(result_dir)
+
+
+def _similarity_column_names(method_key: str) -> tuple[str, str]:
+    return (
+        f"mean similarity to {method_key} training data",
+        f"max similarity to {method_key} training data",
+    )
+
+
+def _resolve_similarity_dataset_for_method(method_key: str) -> tuple[Optional[str], Optional[str]]:
+    datasets = SIMILARITY_DATASETS or {
+        label: {"label": label, "target_db": path}
+        for label, path in TARGET_DBS.items()
+    }
+
+    for dataset_key, dataset in datasets.items():
+        dataset_methods = set(dataset.get("method_keys") or [])
+        if method_key in dataset_methods:
+            label = dataset.get("label") or dataset_key
+            return label, dataset.get("target_db")
+
+    return None, None
+
+
+def _run_mmseqs_command(cmd: list[str]) -> None:
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    if proc.returncode != 0:
+        output = (proc.stdout or "").strip()
+        if output:
+            output = output.splitlines()[-1]
+            raise RuntimeError(f"MMseqs command failed: {' '.join(cmd)} :: {output}")
+        raise RuntimeError(f"MMseqs command failed: {' '.join(cmd)}")
+
+
+def _write_blank_similarity_columns(
+    output_csv_path: str,
+    mean_col: str,
+    max_col: str,
+) -> None:
+    try:
+        df = pd.read_csv(output_csv_path)
+    except Exception as exc:
+        print(
+            f"[WARN] Could not read output CSV to add blank similarity columns: {exc}",
+            flush=True,
+        )
+        return
+
+    df[mean_col] = ""
+    df[max_col] = ""
+    try:
+        df.to_csv(output_csv_path, index=False)
+    except Exception as exc:
+        print(
+            f"[WARN] Could not write blank similarity columns to output CSV: {exc}",
+            flush=True,
+        )
+
+
+def append_kcat_similarity_columns_to_output_csv(
+    output_csv_path: str,
+    kcat_method_key: str,
+) -> None:
+    """
+    Best-effort enrichment for completed kcat jobs.
+
+    Adds two per-row columns to output.csv:
+      - mean similarity to {method} training data
+      - max similarity to {method} training data
+
+    On any error, both columns are still created with blank values.
+    """
+    mean_col, max_col = _similarity_column_names(kcat_method_key)
+    temp_files_to_cleanup: list[str] = []
+
+    try:
+        df = pd.read_csv(output_csv_path)
+        if "Protein Sequence" not in df.columns:
+            raise ValueError('Output CSV is missing required "Protein Sequence" column')
+
+        dataset_label, target_db = _resolve_similarity_dataset_for_method(kcat_method_key)
+        if not target_db:
+            raise ValueError(
+                f"No similarity dataset is configured for method '{kcat_method_key}'"
+            )
+        if not (os.path.exists(target_db) or os.path.exists(f"{target_db}.dbtype")):
+            raise FileNotFoundError(
+                f"Similarity DB for '{dataset_label or kcat_method_key}' not found at {target_db}"
+            )
+
+        raw_sequences = [str(seq).strip() for seq in df["Protein Sequence"].fillna("").tolist()]
+        unique_sequences: list[str] = []
+        seq_to_unique_id: dict[str, str] = {}
+        for seq in raw_sequences:
+            if not seq:
+                continue
+            if seq not in seq_to_unique_id:
+                seq_to_unique_id[seq] = f"useq{len(seq_to_unique_id)}"
+                unique_sequences.append(seq)
+
+        if not unique_sequences:
+            raise ValueError("No non-empty protein sequences available for similarity analysis")
+
+        query_fasta_path = create_fasta_file(unique_sequences, seq_to_unique_id)
+        temp_files_to_cleanup.append(query_fasta_path)
+
+        query_dir = tempfile.mkdtemp(dir=TMP_DIR)
+        temp_files_to_cleanup.append(query_dir)
+        query_db = os.path.join(query_dir, "queryDB")
+        _run_mmseqs_command(_mmseqs_cmd("createdb", query_fasta_path, query_db))
+
+        result_dir = tempfile.mkdtemp(dir=TMP_DIR)
+        temp_files_to_cleanup.append(result_dir)
+        result_db = os.path.join(result_dir, "resultDB")
+        result_file = os.path.join(result_dir, "result.m8")
+
+        _run_mmseqs_command(
+            _mmseqs_cmd(
+                "search",
+                query_db,
+                target_db,
+                result_db,
+                result_dir,
+                "--max-seqs",
+                "1000",
+                "-s",
+                "7.5",
+                "-e",
+                "0.001",
+                "-v",
+                "0",
+            )
+        )
+        _run_mmseqs_command(
+            _mmseqs_cmd(
+                "convertalis",
+                query_db,
+                target_db,
+                result_db,
+                result_file,
+                "--format-output",
+                "query,target,pident",
+            )
+        )
+
+        unique_max_identity, unique_mean_identity = parse_mmseqs_results(
+            result_file,
+            query_fasta_path,
+        )
+
+        sequence_to_max = {
+            seq: round(float(unique_max_identity.get(unique_id, 0.0)), 2)
+            for seq, unique_id in seq_to_unique_id.items()
+        }
+        sequence_to_mean = {
+            seq: round(float(unique_mean_identity.get(unique_id, 0.0)), 2)
+            for seq, unique_id in seq_to_unique_id.items()
+        }
+
+        mean_values: list[float | str] = []
+        max_values: list[float | str] = []
+        for seq in raw_sequences:
+            if not seq:
+                mean_values.append("")
+                max_values.append("")
+                continue
+            mean_values.append(sequence_to_mean.get(seq, 0.0))
+            max_values.append(sequence_to_max.get(seq, 0.0))
+
+        df[mean_col] = mean_values
+        df[max_col] = max_values
+        df.to_csv(output_csv_path, index=False)
+
+    except Exception as exc:
+        print(
+            f"[WARN] Could not enrich output CSV with kcat similarity columns for "
+            f"method '{kcat_method_key}': {exc}",
+            flush=True,
+        )
+        _write_blank_similarity_columns(output_csv_path, mean_col, max_col)
+    finally:
+        cleanup_temporary_files(*temp_files_to_cleanup)

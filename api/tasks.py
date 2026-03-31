@@ -34,6 +34,7 @@ from api.methods.base import PredictionError
 from api.methods.registry import get as get_method
 from api.models import Job
 from api.prediction_engines.generic_subprocess import run_generic_subprocess_prediction
+from api.services.similarity_service import append_kcat_similarity_columns_to_output_csv
 from api.utils.extra_info import _source, build_extra_info
 from api.utils.handle_long import get_valid_indices, truncate_sequences
 from api.utils.job_utils import canonicalise_targets
@@ -358,6 +359,8 @@ def _execute_prediction(
 
     out_path = _output_path(job.public_id)
     df.to_csv(out_path, index=False)
+    if target == "kcat":
+        append_kcat_similarity_columns_to_output_csv(out_path, desc.key)
 
     # ── 7. Credit back empty rows and update job ──────────────────────────────
     empty = int((df[output_col] == "").sum()) + int(df[output_col].isna().sum())
@@ -556,6 +559,7 @@ def _execute_both_prediction(
     # ── 7. Write CSV, credit back, update job ─────────────────────────────────
     out_path = _output_path(job.public_id)
     results_df.to_csv(out_path, index=False)
+    append_kcat_similarity_columns_to_output_csv(out_path, kcat_desc.key)
 
     fully_predicted = (
         (results_df["kcat (1/s)"] != "")
@@ -767,6 +771,11 @@ def _execute_multi_prediction(
 
     out_path = _output_path(job.public_id)
     results_df.to_csv(out_path, index=False)
+    if "kcat" in targets and "kcat" in desc_by_target:
+        append_kcat_similarity_columns_to_output_csv(
+            out_path,
+            desc_by_target["kcat"].key,
+        )
 
     fully_predicted = pd.Series(True, index=results_df.index)
     for target in targets:
