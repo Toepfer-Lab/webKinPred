@@ -47,6 +47,9 @@ descriptor = MethodDescriptor(
 
 You can implement your method in either of these two ways. They are outlined below. Source code of your method should be added to "models/YourMethod/" (this can be a Git submodule).
 
+General batching best practice:
+- Batching is fine, but keep batch sizes realistic to avoid RAM spikes (generally no more than 32-64 rows/sequences per batch).
+
 ## Path 1: Script + Shared Engine
 
 Use this if your model can run as one subprocess call.
@@ -192,6 +195,11 @@ If your method uses PLM embeddings, read:
 - [PLM_EMBEDDING_CACHE.md](PLM_EMBEDDING_CACHE.md)
 
 It explains how to use the interface cache for fast inference on repeated sequences.
+
+Best practices for embedding generation:
+- Always deduplicate protein sequences before embedding inference. Compute embeddings only for **unique** proteins, then map them back to all matching rows.
+- Example: if an input has 1,000 rows but only 10 unique protein sequences, compute 10 embeddings (not 1,000).
+- For PLM embedding inference, always use batch size 1 (compute one protein embedding at a time).
 
 ## 5. Add MMseqs Similarity Dataset (Optional)
 
