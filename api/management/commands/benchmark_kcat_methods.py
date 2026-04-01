@@ -1,5 +1,5 @@
 """
-Benchmark kcat inference latency for all registered kcat-capable methods.
+Benchmark kcat inference latency for all production API kcat-capable methods.
 
 For each method, this command:
 1) Generates 1,000 reactions from 100 unique proteins (defaults), where
@@ -7,29 +7,26 @@ For each method, this command:
 2) Runs one prediction job with fresh proteins (uncached embedding path).
 3) Runs a second prediction job with the exact same proteins (cached path).
 4) Prints a readable per-method summary:
-   DLKcat - 100.00s (not cached), 10.00s (cached)
+   DLKcat - 100.00s compute (not cached), 10.00s compute (cached)
 
-The command uses the same backend execution path as production jobs by calling
-`api.tasks.run_prediction` directly.
+The command submits jobs to the public REST API (/api/v1/submit/) and polls
+/api/v1/status/<job_id>/, reporting only server-side compute time
+(`computeSeconds`) and not queue time.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import random
 import secrets
-import shutil
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Any
 
 import pandas as pd
-from django.conf import settings
+import requests
 from django.core.management.base import BaseCommand, CommandError
-
-from api.methods.registry import all_methods
-from api.models import Job
-from api.tasks import run_prediction
 
 AA_ALPHABET = "ACDEFGHIKLMNPQRSTVWY"
 SUBSTRATE_POOL = [
@@ -52,11 +49,12 @@ PRODUCT_POOL = [
     "O=C=O",           # carbon dioxide
     "CC(=O)N",         # acetamide
 ]
+DEFAULT_API_BASE_URL = "https://predictor.openkinetics.org/api/v1"
 
 
 @dataclass
 class SingleRunResult:
-    seconds: float
+    compute_seconds: float | None
     status: str
     error_message: str
     public_id: str
@@ -101,6 +99,14 @@ class Command(BaseCommand):
             help="Maximum protein length (default: 1000).",
         )
         parser.add_argument(
+            "--testmode",
+            action="store_true",
+            help=(
+                "Run the exact same benchmark flow but override workload to "
+                "10 reactions and 1 unique protein."
+            ),
+        )
+        parser.add_argument(
             "--seed",
             type=int,
             default=None,
@@ -125,9 +131,40 @@ class Command(BaseCommand):
             help='How task pipeline handles long sequences (default: "truncate").',
         )
         parser.add_argument(
-            "--keep-jobs",
-            action="store_true",
-            help="Keep benchmark Job records and media/jobs/<public_id> artifacts.",
+            "--api-base-url",
+            type=str,
+            default=os.getenv("WEBKINPRED_API_BASE_URL", DEFAULT_API_BASE_URL),
+            help=(
+                "Base URL for the v1 API (default: env WEBKINPRED_API_BASE_URL "
+                f"or {DEFAULT_API_BASE_URL})."
+            ),
+        )
+        parser.add_argument(
+            "--api-key",
+            type=str,
+            default=os.getenv("WEBKINPRED_API_KEY"),
+            help=(
+                "Bearer API key (default: env WEBKINPRED_API_KEY). "
+                "Required for authenticated submit/status endpoints."
+            ),
+        )
+        parser.add_argument(
+            "--poll-seconds",
+            type=float,
+            default=5.0,
+            help="Polling interval in seconds for /status/ (default: 5).",
+        )
+        parser.add_argument(
+            "--timeout-seconds",
+            type=int,
+            default=7200,
+            help="Max wait per job before timing out (default: 7200).",
+        )
+        parser.add_argument(
+            "--request-timeout-seconds",
+            type=float,
+            default=60.0,
+            help="HTTP request timeout in seconds (default: 60).",
         )
 
     def handle(self, *args, **options):
@@ -135,9 +172,21 @@ class Command(BaseCommand):
         num_proteins = options["num_proteins"]
         avg_seq_len = options["avg_seq_len"]
         max_seq_len = options["max_seq_len"]
+        testmode = options["testmode"]
         methods_filter = options["methods"]
         handle_long_sequences = options["handle_long_sequences"]
-        keep_jobs = options["keep_jobs"]
+        api_base_url = options["api_base_url"].rstrip("/")
+        api_key = options["api_key"]
+        poll_seconds = options["poll_seconds"]
+        timeout_seconds = options["timeout_seconds"]
+        request_timeout_seconds = options["request_timeout_seconds"]
+
+        if testmode:
+            num_reactions = 10
+            num_proteins = 1
+            self.stdout.write(
+                "Test mode enabled: overriding workload to 10 reactions and 1 unique protein."
+            )
 
         self._validate_generation_parameters(
             num_reactions=num_reactions,
@@ -146,33 +195,43 @@ class Command(BaseCommand):
             max_seq_len=max_seq_len,
         )
 
-        registry = all_methods()
-        kcat_methods = {
-            key: desc
-            for key, desc in registry.items()
-            if "kcat" in desc.supports
-        }
+        if not api_key:
+            raise CommandError(
+                "Missing API key. Pass --api-key or set WEBKINPRED_API_KEY."
+            )
+        if poll_seconds <= 0:
+            raise CommandError("--poll-seconds must be > 0.")
+        if timeout_seconds <= 0:
+            raise CommandError("--timeout-seconds must be > 0.")
+        if request_timeout_seconds <= 0:
+            raise CommandError("--request-timeout-seconds must be > 0.")
 
-        if not kcat_methods:
-            raise CommandError("No kcat-capable methods are registered.")
+        session = requests.Session()
+        session.headers.update(
+            {
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            }
+        )
+        kcat_methods = self._fetch_kcat_methods(
+            session=session,
+            api_base_url=api_base_url,
+            request_timeout_seconds=request_timeout_seconds,
+        )
 
         if methods_filter:
             requested = set(methods_filter)
-            unknown = sorted(requested - set(registry.keys()))
+            unknown = sorted(requested - set(kcat_methods))
             if unknown:
                 raise CommandError(
-                    "Unknown method key(s): " + ", ".join(unknown)
+                    "Unknown or non-kcat method key(s) for this API: "
+                    + ", ".join(unknown)
                 )
-            non_kcat = sorted(
-                key for key in requested if key not in kcat_methods
+            selected_keys = sorted(
+                key for key in requested if key in kcat_methods
             )
-            if non_kcat:
-                raise CommandError(
-                    "Method(s) do not support kcat: " + ", ".join(non_kcat)
-                )
-            selected_keys = sorted(requested)
         else:
-            selected_keys = sorted(kcat_methods.keys())
+            selected_keys = sorted(kcat_methods)
 
         run_seed = options["seed"]
         if run_seed is None:
@@ -186,16 +245,32 @@ class Command(BaseCommand):
             f"{num_reactions} reactions, {num_proteins} unique proteins, "
             f"avg length {avg_seq_len}, max length {max_seq_len}"
         )
+        self.stdout.write(f"API base URL: {api_base_url}")
+        self.stdout.write(
+            "Reporting metric: computeSeconds from /api/v1/status/ "
+            "(queueSeconds ignored)."
+        )
+        self.stdout.write(
+            "Projected quota cost: "
+            f"{len(selected_keys) * 2 * num_reactions} rows "
+            "(2 jobs per method)."
+        )
         self.stdout.write(
             f"Seed: {run_seed} "
             f"({'fixed' if options['seed'] is not None else 'auto-generated'})"
         )
         self.stdout.write(
-            "Uncached run uses fresh proteins per method; cached run repeats the same proteins."
+            "Uncached run uses fresh proteins per method; cached run repeats "
+            "the same proteins for that method."
+        )
+        self.stdout.write(
+            "Cross-method overlap is disabled: protein sequences are unique across methods "
+            "to avoid shared PLM cache effects."
         )
         self.stdout.write("")
 
         results: list[MethodBenchmarkResult] = []
+        used_sequences: set[str] = set()
 
         for idx, method_key in enumerate(selected_keys, start=1):
             self.stdout.write(f"[{idx}/{len(selected_keys)}] {method_key}")
@@ -207,26 +282,34 @@ class Command(BaseCommand):
                 num_proteins=num_proteins,
                 avg_seq_len=avg_seq_len,
                 max_seq_len=max_seq_len,
+                forbidden_sequences=used_sequences,
             )
+            used_sequences.update(proteins)
             df_input = self._build_reaction_dataframe(
                 proteins=proteins,
                 num_reactions=num_reactions,
             )
 
             uncached_result = self._run_single_benchmark(
+                session=session,
+                api_base_url=api_base_url,
                 method_key=method_key,
                 input_df=df_input,
                 handle_long_sequences=handle_long_sequences,
+                poll_seconds=poll_seconds,
+                timeout_seconds=timeout_seconds,
+                request_timeout_seconds=request_timeout_seconds,
             )
             cached_result = self._run_single_benchmark(
+                session=session,
+                api_base_url=api_base_url,
                 method_key=method_key,
                 input_df=df_input,
                 handle_long_sequences=handle_long_sequences,
+                poll_seconds=poll_seconds,
+                timeout_seconds=timeout_seconds,
+                request_timeout_seconds=request_timeout_seconds,
             )
-
-            if not keep_jobs:
-                self._cleanup_job(uncached_result.public_id)
-                self._cleanup_job(cached_result.public_id)
 
             method_result = MethodBenchmarkResult(
                 method_key=method_key,
@@ -274,14 +357,15 @@ class Command(BaseCommand):
 
         # Ensure we can have one max-length sequence while preserving the target average.
         target_total = num_proteins * avg_seq_len
-        min_total_with_one_max = max_seq_len + (num_proteins - 1)
-        if target_total < min_total_with_one_max:
-            raise CommandError(
-                "Incompatible sequence settings. "
-                "Given --num-proteins, --avg-seq-len and --max-seq-len, "
-                "it is not possible to include one max-length sequence "
-                "while keeping the requested average."
-            )
+        if num_proteins > 1:
+            min_total_with_one_max = max_seq_len + (num_proteins - 1)
+            if target_total < min_total_with_one_max:
+                raise CommandError(
+                    "Incompatible sequence settings. "
+                    "Given --num-proteins, --avg-seq-len and --max-seq-len, "
+                    "it is not possible to include one max-length sequence "
+                    "while keeping the requested average."
+                )
 
     def _derive_method_seed(self, run_seed: int, method_key: str) -> int:
         digest = hashlib.sha256(f"{run_seed}:{method_key}".encode("utf-8")).hexdigest()
@@ -294,6 +378,7 @@ class Command(BaseCommand):
         num_proteins: int,
         avg_seq_len: int,
         max_seq_len: int,
+        forbidden_sequences: set[str] | None = None,
     ) -> list[str]:
         lengths = self._generate_protein_lengths(
             rng=rng,
@@ -302,12 +387,13 @@ class Command(BaseCommand):
             max_seq_len=max_seq_len,
         )
 
+        blocked = forbidden_sequences or set()
         proteins: list[str] = []
         seen: set[str] = set()
         for length in lengths:
             for _ in range(1000):
                 seq = "".join(rng.choices(AA_ALPHABET, k=length))
-                if seq not in seen:
+                if seq not in seen and seq not in blocked:
                     seen.add(seq)
                     proteins.append(seq)
                     break
@@ -325,6 +411,11 @@ class Command(BaseCommand):
         avg_seq_len: int,
         max_seq_len: int,
     ) -> list[int]:
+        if num_proteins == 1:
+            # In test mode we often use a single unique protein; preserve the
+            # requested average length directly in this edge case.
+            return [avg_seq_len]
+
         target_total = num_proteins * avg_seq_len
         lengths = [avg_seq_len] * num_proteins
         lengths[0] = max_seq_len  # Ensure one max-length protein exists.
@@ -389,66 +480,223 @@ class Command(BaseCommand):
     def _run_single_benchmark(
         self,
         *,
+        session: requests.Session,
+        api_base_url: str,
         method_key: str,
         input_df: pd.DataFrame,
         handle_long_sequences: str,
+        poll_seconds: float,
+        timeout_seconds: int,
+        request_timeout_seconds: float,
     ) -> SingleRunResult:
-        job = Job(
-            prediction_type="kcat",
-            kcat_method=method_key,
-            km_method=None,
-            kcat_km_method=None,
-            status="Pending",
-            handle_long_sequences=handle_long_sequences,
-            requested_rows=len(input_df),
-            ip_address="",  # empty = quota refund hooks become no-op
-        )
-        job.save()
+        payload = {
+            "targets": ["kcat"],
+            "methods": {"kcat": method_key},
+            "handleLongSequences": handle_long_sequences,
+            "useExperimental": False,
+            "canonicalizeSubstrates": True,
+            "data": input_df.to_dict(orient="records"),
+        }
 
-        job_dir = Path(settings.MEDIA_ROOT) / "jobs" / str(job.public_id)
-        job_dir.mkdir(parents=True, exist_ok=True)
-        input_df.to_csv(job_dir / "input.csv", index=False)
-
-        start = time.perf_counter()
-        unexpected_error = ""
+        submit_url = f"{api_base_url}/submit/"
         try:
-            run_prediction(
-                public_id=job.public_id,
-                method_key=method_key,
-                target="kcat",
-                experimental_results=[],
+            response = session.post(
+                submit_url,
+                json=payload,
+                timeout=request_timeout_seconds,
             )
-        except Exception as exc:  # defensive guard to keep the benchmark loop running
-            unexpected_error = str(exc)
-        elapsed = time.perf_counter() - start
+        except requests.RequestException as exc:
+            return SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message=f"Submit request failed: {exc}",
+                public_id="",
+            )
 
-        job.refresh_from_db()
-        status = job.status or "Failed"
-        error_message = (job.error_message or "").strip()
-        if unexpected_error and not error_message:
-            error_message = unexpected_error
-            status = "Failed"
+        if response.status_code >= 400:
+            return SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message=(
+                    f"Submit failed ({response.status_code}): "
+                    f"{self._extract_error_message(response)}"
+                ),
+                public_id="",
+            )
 
-        return SingleRunResult(
-            seconds=elapsed,
-            status=status,
-            error_message=error_message,
-            public_id=job.public_id,
+        try:
+            submit_data = response.json()
+        except ValueError:
+            return SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message="Submit response was not valid JSON.",
+                public_id="",
+            )
+
+        public_id = str(submit_data.get("jobId", "")).strip()
+        if not public_id:
+            return SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message="Submit response did not include jobId.",
+                public_id="",
+            )
+
+        return self._poll_job_until_terminal(
+            session=session,
+            api_base_url=api_base_url,
+            public_id=public_id,
+            poll_seconds=poll_seconds,
+            timeout_seconds=timeout_seconds,
+            request_timeout_seconds=request_timeout_seconds,
         )
 
-    def _cleanup_job(self, public_id: str) -> None:
-        Job.objects.filter(public_id=public_id).delete()
-        job_dir = Path(settings.MEDIA_ROOT) / "jobs" / str(public_id)
-        shutil.rmtree(job_dir, ignore_errors=True)
+    def _poll_job_until_terminal(
+        self,
+        *,
+        session: requests.Session,
+        api_base_url: str,
+        public_id: str,
+        poll_seconds: float,
+        timeout_seconds: int,
+        request_timeout_seconds: float,
+    ) -> SingleRunResult:
+        deadline = time.monotonic() + timeout_seconds
+        status_url = f"{api_base_url}/status/{public_id}/"
+        last_error = ""
+        last_status = "Pending"
+
+        while True:
+            if time.monotonic() > deadline:
+                detail = f"Last status: {last_status}"
+                if last_error:
+                    detail += f" | Last poll error: {last_error}"
+                return SingleRunResult(
+                    compute_seconds=None,
+                    status="Failed",
+                    error_message=(
+                        f"Timed out after {timeout_seconds}s waiting for job {public_id}. "
+                        f"{detail}"
+                    ),
+                    public_id=public_id,
+                )
+
+            try:
+                response = session.get(
+                    status_url,
+                    timeout=request_timeout_seconds,
+                )
+            except requests.RequestException as exc:
+                last_error = str(exc)
+                time.sleep(poll_seconds)
+                continue
+
+            if response.status_code >= 400:
+                return SingleRunResult(
+                    compute_seconds=None,
+                    status="Failed",
+                    error_message=(
+                        f"Status failed ({response.status_code}) for job {public_id}: "
+                        f"{self._extract_error_message(response)}"
+                    ),
+                    public_id=public_id,
+                )
+
+            try:
+                status_data = response.json()
+            except ValueError:
+                return SingleRunResult(
+                    compute_seconds=None,
+                    status="Failed",
+                    error_message=f"Status response for job {public_id} was not valid JSON.",
+                    public_id=public_id,
+                )
+
+            status = str(status_data.get("status", "Unknown")).strip()
+            last_status = status or "Unknown"
+            compute_seconds = self._to_optional_float(status_data.get("computeSeconds"))
+            error_message = str(status_data.get("error", "")).strip()
+
+            if status in {"Completed", "Failed"}:
+                return SingleRunResult(
+                    compute_seconds=compute_seconds,
+                    status=status,
+                    error_message=error_message,
+                    public_id=public_id,
+                )
+
+            time.sleep(poll_seconds)
+
+    def _fetch_kcat_methods(
+        self,
+        *,
+        session: requests.Session,
+        api_base_url: str,
+        request_timeout_seconds: float,
+    ) -> list[str]:
+        methods_url = f"{api_base_url}/methods/"
+        try:
+            response = session.get(methods_url, timeout=request_timeout_seconds)
+        except requests.RequestException as exc:
+            raise CommandError(f"Could not fetch methods from {methods_url}: {exc}")
+
+        if response.status_code >= 400:
+            raise CommandError(
+                f"Failed to fetch methods ({response.status_code}): "
+                f"{self._extract_error_message(response)}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise CommandError(f"/methods response was not valid JSON: {exc}")
+
+        kcat_entries = data.get("methods", {}).get("kcat", [])
+        method_ids = sorted(
+            {
+                str(entry.get("id")).strip()
+                for entry in kcat_entries
+                if isinstance(entry, dict) and str(entry.get("id", "")).strip()
+            }
+        )
+        if not method_ids:
+            raise CommandError(
+                "No kcat-capable methods were returned by the API /methods endpoint."
+            )
+        return method_ids
+
+    def _extract_error_message(self, response: requests.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            text = response.text.strip()
+            return text[:500] if text else "No error details provided."
+
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if error:
+                return str(error)
+        return str(payload)[:500]
+
+    def _to_optional_float(self, value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _format_method_summary(self, result: MethodBenchmarkResult) -> str:
         uncached = result.uncached
         cached = result.cached
 
+        uncached_time = self._format_compute_seconds(uncached.compute_seconds)
+        cached_time = self._format_compute_seconds(cached.compute_seconds)
         base = (
             f"{result.method_key} - "
-            f"{uncached.seconds:.2f}s (not cached), "
-            f"{cached.seconds:.2f}s (cached)"
+            f"{uncached_time} compute (not cached), "
+            f"{cached_time} compute (cached)"
         )
 
         if uncached.status == "Completed" and cached.status == "Completed":
@@ -463,3 +711,8 @@ class Command(BaseCommand):
             details.append(f"cached failed: {msg}")
 
         return base + " | " + " | ".join(details)
+
+    def _format_compute_seconds(self, seconds: float | None) -> str:
+        if seconds is None:
+            return "n/a"
+        return f"{seconds:.2f}s"
