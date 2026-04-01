@@ -496,6 +496,7 @@ class Command(BaseCommand):
             "useExperimental": False,
             "canonicalizeSubstrates": True,
             "data": input_df.to_dict(orient="records"),
+            "includeSimilarityColumns": False,
         }
 
         submit_url = f"{api_base_url}/submit/"
