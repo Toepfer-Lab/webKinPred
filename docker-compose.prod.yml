@@ -89,6 +89,7 @@ services:
       - ./db.sqlite3:/app/db.sqlite3
       - ./media/sequence_info/seqmap.sqlite3:/app/media/sequence_info/seqmap.sqlite3
       - ./staticfiles:/app/staticfiles
+      - ./fastas/dbs:/app/fastas/dbs:ro
       - ./models/EITLEM/Weights:/app/models/EITLEM/Weights:ro
       - ./models/TurNup/data/saved_models:/app/models/TurNup/data/saved_models:ro
       - ./models/UniKP-main/models:/app/models/UniKP-main/models:ro
