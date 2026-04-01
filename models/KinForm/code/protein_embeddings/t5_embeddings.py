@@ -64,6 +64,21 @@ def _weighted_mean(arr: np.ndarray, w: np.ndarray, normalize: bool = True) -> np
     return (arr * w[:, None]).sum(axis=0)
 
 
+def _cleanup_residue_files(residue_dir: Path, keys: List[str]) -> None:
+    """Best-effort removal of residue embedding files for the given keys."""
+    removed = 0
+    for key in keys:
+        fp = residue_dir / f"{key}.npy"
+        try:
+            if fp.exists():
+                fp.unlink()
+                removed += 1
+        except OSError:
+            pass
+    if removed:
+        print(f"Removed {removed} residue embedding file(s) from {residue_dir}")
+
+
 # --------------------------------------------------------------------------- #
 #                              EMBEDDING BACK-END                             #
 # --------------------------------------------------------------------------- #
@@ -141,6 +156,12 @@ def get_prot_t5_embeddings(
 
     if all(key_to_exist.values()):
         print("All required ProtT5 embeddings already on disk — skipping model load.")
+        if not all_layers and "residue" not in settings:
+            if layer is None:
+                _residue_dir = precomputed_root / "prot_t5_last" / "residue_vecs"
+            else:
+                _residue_dir = precomputed_root / f"prot_t5_layer_{layer}" / "residue_vecs"
+            _cleanup_residue_files(_residue_dir, list(seq_dict.keys()))
         if only_save:
             return None
         return _load_existing_embeddings(seq_dict, paths, settings, all_layers, layer)
@@ -285,8 +306,21 @@ def get_prot_t5_embeddings(
 
     # ---------------------- return (optional) ----------------------------- #
     if only_save:
+        if not all_layers and "residue" not in settings:
+            if layer is None:
+                _residue_dir = precomputed_root / "prot_t5_last" / "residue_vecs"
+            else:
+                _residue_dir = precomputed_root / f"prot_t5_layer_{layer}" / "residue_vecs"
+            _cleanup_residue_files(_residue_dir, list(seq_dict.keys()))
         return None
-    return _load_existing_embeddings(seq_dict, paths, settings, all_layers, layer)
+    out = _load_existing_embeddings(seq_dict, paths, settings, all_layers, layer)
+    if not all_layers and "residue" not in settings:
+        if layer is None:
+            _residue_dir = precomputed_root / "prot_t5_last" / "residue_vecs"
+        else:
+            _residue_dir = precomputed_root / f"prot_t5_layer_{layer}" / "residue_vecs"
+        _cleanup_residue_files(_residue_dir, list(seq_dict.keys()))
+    return out
 
 
 # --------------------------------------------------------------------------- #
