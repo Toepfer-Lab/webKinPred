@@ -140,6 +140,8 @@ def _build_prediction_commands(
         checkpoint_dir,
         "--uncertainty_method",
         "mve",
+        "--batch_size",
+        "50",
         "--smiles_column",
         "SMILES",
         "--individual_ensemble_predictions",

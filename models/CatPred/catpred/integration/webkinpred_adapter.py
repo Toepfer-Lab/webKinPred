@@ -34,6 +34,7 @@ _PREDICTION_COLUMN = {
     "km": "Prediction_(mM)",
     "ki": "Prediction_(mM)",
 }
+_INFERENCE_PROGRESS_CHUNK_SIZE = 50
 _AA_TO_INDEX = {
     "A": 0,
     "R": 1,
@@ -328,6 +329,54 @@ def _write_protein_records(
         json.dump(records, handle)
 
 
+def _predict_rows_chunk(
+    *,
+    rows: list[dict[str, Any]],
+    seq_ids: list[str],
+    parameter: str,
+    repo_root: Path,
+    media_path: Path,
+    checkpoint_root: Path,
+) -> list[float]:
+    with tempfile.TemporaryDirectory(prefix="catpred_webkinpred_") as tmp_dir_str:
+        tmp_dir = Path(tmp_dir_str).resolve()
+        input_csv = tmp_dir / "input.csv"
+        protein_records = tmp_dir / "protein_records.json.gz"
+        results_dir = tmp_dir / "results"
+
+        _build_input_dataframe(rows, seq_ids).to_csv(input_csv, index=False)
+        _write_protein_records(
+            rows=rows,
+            seq_ids=seq_ids,
+            parameter=parameter,
+            media_path=media_path,
+            checkpoint_dir=(checkpoint_root / parameter).resolve(),
+            out_path=protein_records,
+        )
+
+        request = PredictionRequest(
+            parameter=parameter,
+            input_file=str(input_csv),
+            checkpoint_dir=str((checkpoint_root / parameter).resolve()),
+            use_gpu=False,
+            repo_root=str(repo_root),
+            python_executable=sys.executable,
+            protein_records_file=str(protein_records),
+        )
+        output_file = run_prediction_pipeline(request=request, results_dir=str(results_dir))
+        output_df = pd.read_csv(output_file)
+        value_col = _PREDICTION_COLUMN[parameter]
+        if value_col not in output_df.columns:
+            raise RuntimeError(f"CatPred output is missing expected column: {value_col}")
+
+        raw_preds = output_df[value_col].tolist()
+        if len(raw_preds) != len(rows):
+            raise RuntimeError(
+                f"CatPred produced {len(raw_preds)} predictions for {len(rows)} rows."
+            )
+        return [float(pred) for pred in raw_preds]
+
+
 def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     rows = payload.get("rows") or []
     if not isinstance(rows, list):
@@ -364,52 +413,37 @@ def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         media_path=media_path,
     )
 
-    with tempfile.TemporaryDirectory(prefix="catpred_webkinpred_") as tmp_dir_str:
-        tmp_dir = Path(tmp_dir_str).resolve()
-        input_csv = tmp_dir / "input.csv"
-        protein_records = tmp_dir / "protein_records.json.gz"
-        results_dir = tmp_dir / "results"
-
-        _build_input_dataframe(valid_rows, seq_ids).to_csv(input_csv, index=False)
-        _write_protein_records(
-            rows=valid_rows,
-            seq_ids=seq_ids,
+    valid_predictions: list[float] = []
+    total = len(rows)
+    base_done = len(invalid_indices)
+    processed_valid = 0
+    for start in range(0, len(valid_rows), _INFERENCE_PROGRESS_CHUNK_SIZE):
+        chunk_rows = valid_rows[start : start + _INFERENCE_PROGRESS_CHUNK_SIZE]
+        chunk_seq_ids = seq_ids[start : start + _INFERENCE_PROGRESS_CHUNK_SIZE]
+        chunk_preds = _predict_rows_chunk(
+            rows=chunk_rows,
+            seq_ids=chunk_seq_ids,
             parameter=parameter,
+            repo_root=repo_root,
             media_path=media_path,
-            checkpoint_dir=(checkpoint_root / parameter).resolve(),
-            out_path=protein_records,
+            checkpoint_root=checkpoint_root,
         )
+        valid_predictions.extend(chunk_preds)
+        processed_valid += len(chunk_rows)
+        done = min(total, base_done + processed_valid)
+        print(f"Progress: {done}/{total}", flush=True)
 
-        request = PredictionRequest(
-            parameter=parameter,
-            input_file=str(input_csv),
-            checkpoint_dir=str((checkpoint_root / parameter).resolve()),
-            use_gpu=False,
-            repo_root=str(repo_root),
-            python_executable=sys.executable,
-            protein_records_file=str(protein_records),
+    if len(valid_predictions) != len(valid_rows):
+        raise RuntimeError(
+            f"CatPred produced {len(valid_predictions)} predictions for {len(valid_rows)} rows."
         )
-        output_file = run_prediction_pipeline(request=request, results_dir=str(results_dir))
-        output_df = pd.read_csv(output_file)
-        value_col = _PREDICTION_COLUMN[parameter]
-        if value_col not in output_df.columns:
-            raise RuntimeError(f"CatPred output is missing expected column: {value_col}")
-
-        valid_predictions = output_df[value_col].tolist()
-        if len(valid_predictions) != len(valid_rows):
-            raise RuntimeError(
-                f"CatPred produced {len(valid_predictions)} predictions for {len(valid_rows)} rows."
-            )
 
     valid_iter = iter(valid_predictions)
-    for idx in range(len(rows)):
-        if idx in invalid_indices:
+    invalid_set = set(invalid_indices)
+    for idx in range(total):
+        if idx in invalid_set:
             continue
         predictions[idx] = float(next(valid_iter))
-
-    total = len(rows)
-    for idx in range(total):
-        print(f"Progress: {idx + 1}/{total}", flush=True)
 
     return {
         "predictions": predictions,

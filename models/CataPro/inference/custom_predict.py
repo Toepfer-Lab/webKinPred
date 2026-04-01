@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import torch
@@ -332,6 +333,7 @@ def run_catapro(
     seq_cache_dir: Path,
     seqmap_cli: Path,
     seqmap_db: Path,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[float]:
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -347,8 +349,9 @@ def run_catapro(
 
     feats = np.concatenate([seq_embeddings, mol_embeddings, maccs], axis=1)
     dataloader = DataLoader(FeatureDataset(feats), batch_size=32, shuffle=False)
+    total_predictions = int(feats.shape[0])
 
-    fold_preds: list[np.ndarray] = []
+    fold_models = []
     _, subdir = _build_model(kinetics_type, device)
     model_dir = model_root / "models" / subdir
     if not model_dir.exists():
@@ -362,12 +365,35 @@ def run_catapro(
         state = torch.load(str(ckpt), map_location=device)
         model.load_state_dict(state)
         model.to(device)
-        fold_pred = _predict_fold(model, dataloader, kinetics_type, device)
-        fold_preds.append(fold_pred.reshape(-1, 1))
+        model.eval()
+        fold_models.append(model)
 
-    log10_pred = np.mean(np.concatenate(fold_preds, axis=1), axis=1)
-    linear_pred = np.power(10.0, log10_pred.astype(np.float64))
-    return linear_pred.astype(float).tolist()
+    predictions: list[float] = []
+    with torch.inference_mode():
+        for batch in dataloader:
+            batch = batch.to(device)
+            ezy_feats = batch[:, :1024]
+            sbt_feats = batch[:, 1024:]
+            batch_fold_preds: list[np.ndarray] = []
+            for model in fold_models:
+                if kinetics_type == "KCAT/KM":
+                    pred = model(ezy_feats, sbt_feats)[-1]
+                else:
+                    pred = model(ezy_feats, sbt_feats)
+                batch_fold_preds.append(pred.float().cpu().numpy().ravel())
+
+            batch_log10 = np.mean(np.stack(batch_fold_preds, axis=0), axis=0)
+            batch_linear = np.power(10.0, batch_log10.astype(np.float64))
+            predictions.extend(batch_linear.astype(float).tolist())
+
+            if progress_callback is not None:
+                progress_callback(len(predictions), total_predictions)
+
+    del fold_models
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return predictions
 
 
 def _kinetics_type_from_payload(payload: dict) -> str:
@@ -448,6 +474,13 @@ def run_from_payload(payload: dict) -> dict:
         valid_smiles.append(substrate)
 
     if valid_indices:
+        total = len(rows)
+        base_done = len(invalid_indices)
+
+        def _emit_progress(done_valid: int, _total_valid: int) -> None:
+            done_total = min(total, base_done + done_valid)
+            print(f"Progress: {done_total}/{total}", flush=True)
+
         valid_preds = run_catapro(
             sequences=valid_sequences,
             smiles=valid_smiles,
@@ -458,13 +491,14 @@ def run_from_payload(payload: dict) -> dict:
             seq_cache_dir=seq_cache_dir,
             seqmap_cli=seqmap_cli,
             seqmap_db=seqmap_db,
+            progress_callback=_emit_progress,
         )
         for local_idx, pred in enumerate(valid_preds):
             predictions[valid_indices[local_idx]] = float(pred)
-
-    total = len(rows)
-    for i in range(total):
-        print(f"Progress: {i + 1}/{total}", flush=True)
+    else:
+        total = len(rows)
+        for i in range(total):
+            print(f"Progress: {i + 1}/{total}", flush=True)
 
     return {
         "predictions": predictions,
