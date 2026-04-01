@@ -25,104 +25,149 @@
   margin-bottom: 0.6rem;
 }
 
-/* ── Input Data Format grid ── */
-.fmtgrid {
-  display: flex;
-  gap: 0.65rem;
-}
-
-.fmtcard {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  background: rgba(24, 22, 50, 0.74);
+/* ── Input Data Format comparison table ── */
+.fmttable {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.9fr) 2fr 1.5fr 1.5fr;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   overflow: hidden;
+  font-size: 0.75rem;
 }
 
-.fmtcard-header {
-  padding: 0.65rem 0.85rem 0.6rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+.fmtt-row {
+  display: contents;
 }
 
-.fmtcard-title {
-  display: block;
-  font-size: 0.84rem;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.95);
-  margin-bottom: 0.3rem;
-  letter-spacing: 0.01em;
+/* zebra-stripe every other data row */
+.fmtt-row:nth-child(odd) .fmtt-label-cell,
+.fmtt-row:nth-child(odd) .fmtt-cell {
+  background: rgba(255, 255, 255, 0.025);
 }
 
-.fmtcard-models {
-  display: block;
-  font-size: 0.69rem;
-  color: rgba(255, 255, 255, 0.68);
-  line-height: 1.5;
+/* header row */
+.fmtt-head .fmtt-label-cell,
+.fmtt-head .fmtt-cell {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-/* Mini-spreadsheet: columns side by side */
-.fmtcols {
-  display: flex;
-  flex: 1;
-}
-
-.fmtcol {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+.fmtt-label-cell,
+.fmtt-cell {
+  padding: 0.5rem 0.7rem;
   border-right: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
 }
 
-.fmtcol:last-child {
+.fmtt-label-cell:last-child,
+.fmtt-cell:last-child {
   border-right: none;
 }
 
-.fmtcol-name {
-  display: block;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.69rem;
+/* last real row — no bottom border */
+.fmtt-row:last-child .fmtt-label-cell,
+.fmtt-row:last-child .fmtt-cell {
+  border-bottom: none;
+}
+
+.fmtt-label-cell {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.fmtt-label {
+  font-size: 0.71rem;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.88);
-  background: rgba(255, 255, 255, 0.06);
-  padding: 0.32rem 0.55rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  background: transparent;
+  padding: 0;
   letter-spacing: 0.01em;
 }
 
-.fmtcol-desc {
-  display: block;
-  font-size: 0.68rem;
-  color: rgba(255, 255, 255, 0.4);
-  padding: 0.38rem 0.55rem;
+.fmtt-col-head {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.6rem 0.7rem;
+}
+
+.fmtt-format-name {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  letter-spacing: 0.01em;
+}
+
+.fmtt-models {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.55);
   line-height: 1.5;
 }
 
-.fmtcol-desc code {
-  font-size: 0.66rem;
-  color: rgba(255, 255, 255, 0.65);
-  background: rgba(255, 255, 255, 0.08);
-  padding: 0.05rem 0.25rem;
+.fmtt-present {
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.45;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.fmtt-present code {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.09);
+  padding: 0.05rem 0.28rem;
   border-radius: 3px;
 }
 
-.fmtcol-example {
-  display: inline-block;
-  margin-top: 0.2rem;
-  color: rgba(255, 255, 255, 0.5) !important;
-  letter-spacing: 0.01em;
+.fmtt-absent {
+  background: rgba(180, 40, 40, 0.06) !important;
+  justify-content: center;
+}
+
+.fmtt-not-required {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(220, 80, 80, 0.7);
+  border: 1px solid rgba(220, 80, 80, 0.25);
+  border-radius: 4px;
+  padding: 0.15rem 0.45rem;
+}
+
+.fmtt-subtitle {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.38);
+  text-align: center;
+  margin-bottom: 0.75rem;
+  margin-top: -0.6rem;
+}
+
+.fmtt-example {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.35);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 @media (max-width: 640px) {
-  .fmtgrid {
+  .fmttable {
+    grid-template-columns: 1fr;
+  }
+  .fmtt-row {
+    display: flex;
     flex-direction: column;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .fmtt-row.fmtt-head {
+    display: none;
+  }
+  .fmtt-label-cell,
+  .fmtt-cell {
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
 }
 
