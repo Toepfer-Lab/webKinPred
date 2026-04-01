@@ -300,7 +300,7 @@ function JobStatus() {
                       <Form.Control
                         type="text"
                         value={inputPublicId}
-                        placeholder="e.g., 8f4e7a9b-1234-4acb-9d01-abcdef123456"
+                        placeholder="e.g., pl1a2V1"
                         onChange={(e) => setInputPublicId(e.target.value)}
                         required
                         className="kave-input"
