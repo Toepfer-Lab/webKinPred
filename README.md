@@ -328,4 +328,4 @@ For questions or collaboration: open an issue or reach out to the authors of the
 
 ## Funding
 
-This work was supported by the European Union’s Horizon Europe Framework Programme (#101080997), the Swiss State Secretariat for Education, Research and Innovation (#23.00232), and United Kingdom Research and Innovation (#10083717 and #10080153).
+This work was supported by EU Horizon Europe #101080997, Swiss SERI #23.00232, UKRI #10083717 & #10080153, FNR PRIDE21/16763386/CANBIO2, Novo Nordisk Foundation #NNF10CC1016517, Knut & Alice Wallenberg Foundation, EU Horizon 2020 #686070 & #814650, National Key R&D China 2025YFA0922700
