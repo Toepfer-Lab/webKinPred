@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from webKinPred.similarity_dataset_registry import SIMILARITY_DATASET_REGISTRY
 
@@ -47,17 +48,25 @@ def build_prediction_scripts(base_path: str | Path) -> dict[str, str]:
     return {key: _join(base_path, rel) for key, rel in _PREDICTION_SCRIPT_REL.items()}
 
 
-def build_similarity_datasets(fastas_dir: str | Path) -> dict[str, dict]:
+def build_similarity_datasets(fastas_dir: str | Path) -> dict[str, dict[str, str | list[str]]]:
     fastas_dir = str(Path(fastas_dir).resolve())
-    return {
-        label: {
+    datasets: dict[str, dict[str, str | list[str]]] = {}
+    for label, meta in SIMILARITY_DATASET_REGISTRY.items():
+        meta_obj: dict[str, Any] = dict(meta)
+        fasta_filename = str(meta_obj.get("fasta_filename", ""))
+        db_name = str(meta_obj.get("db_name", ""))
+        method_keys_obj = meta_obj.get("method_keys", [])
+        if isinstance(method_keys_obj, list):
+            method_keys = [str(key) for key in method_keys_obj]
+        else:
+            method_keys = []
+        datasets[label] = {
             "label": label,
-            "fasta": f"{fastas_dir}/{meta['fasta_filename']}",
-            "target_db": f"{fastas_dir}/dbs/{meta['db_name']}",
-            "method_keys": list(meta.get("method_keys", [])),
+            "fasta": f"{fastas_dir}/{fasta_filename}",
+            "target_db": f"{fastas_dir}/dbs/{db_name}",
+            "method_keys": method_keys,
         }
-        for label, meta in SIMILARITY_DATASET_REGISTRY.items()
-    }
+    return datasets
 
 
 def build_experimental_paths(media_dir: str | Path) -> tuple[str, str]:

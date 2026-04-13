@@ -22,6 +22,7 @@ regardless of where the script is run.
 
 import io
 import json
+from typing import Any
 
 import pandas as pd
 from django.conf import settings
@@ -152,7 +153,7 @@ def api_list_methods(request):
         }
 
     # Group methods by the prediction targets they support.
-    methods_payload = {"kcat": [], "Km": [], "kcat/Km": []}
+    methods_payload: dict[str, list[dict[str, Any]]] = {"kcat": [], "Km": [], "kcat/Km": []}
     for key, desc in registry.items():
         obj = _method_obj(key, desc)
         if "kcat" in desc.supports:
@@ -264,6 +265,9 @@ def api_submit_job(request):
 
     if error_response:
         return error_response
+
+    if success_data is None:
+        return _json_error("Job submission failed unexpectedly.", status=500)
 
     public_id = success_data["public_id"]
 
@@ -440,6 +444,8 @@ def api_job_status(request, public_id):
         else int((now - job.submission_time).total_seconds())
     )
 
+    queue_seconds: int | None
+    compute_seconds: int | None
     if job.start_time:
         queue_seconds = int(max(0, (job.start_time - job.submission_time).total_seconds()))
         if job.completion_time:
@@ -452,7 +458,14 @@ def api_job_status(request, public_id):
 
     from api.utils.job_utils import get_queue_position
 
-    data = {
+    progress: dict[str, Any] = {
+        "moleculesTotal": job.total_molecules,
+        "moleculesProcessed": job.molecules_processed,
+        "predictionsTotal": job.total_predictions,
+        "predictionsMade": job.predictions_made,
+        "invalidRows": job.invalid_rows,
+    }
+    data: dict[str, Any] = {
         "jobId": job.public_id,
         "status": job.status,
         "submittedAt": job.submission_time.isoformat(),
@@ -460,18 +473,12 @@ def api_job_status(request, public_id):
         "queueSeconds": queue_seconds,
         "computeSeconds": compute_seconds,
         "queuePosition": get_queue_position(job),
-        "progress": {
-            "moleculesTotal": job.total_molecules,
-            "moleculesProcessed": job.molecules_processed,
-            "predictionsTotal": job.total_predictions,
-            "predictionsMade": job.predictions_made,
-            "invalidRows": job.invalid_rows,
-        },
+        "progress": progress,
     }
 
     embedding_progress = get_embedding_progress(job.public_id)
     if embedding_progress:
-        data["progress"]["embedding"] = {
+        progress["embedding"] = {
             "enabled": bool(embedding_progress.get("enabled", True)),
             "state": embedding_progress.get("state", "running"),
             "methodKey": embedding_progress.get("methodKey")
@@ -489,7 +496,7 @@ def api_job_status(request, public_id):
             "updatedAt": embedding_progress.get("updatedAt"),
         }
 
-    if job.status == "Completed":
+    if job.status == "Completed" and job.completion_time is not None:
         data["completedAt"] = job.completion_time.isoformat()
         data["resultUrl"] = f"/api/v1/result/{public_id}/"
 

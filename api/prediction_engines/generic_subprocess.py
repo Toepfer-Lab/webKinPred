@@ -33,7 +33,7 @@ def run_generic_subprocess_prediction(
     public_id: str,
     target: str,
     **kwargs,
-) -> tuple[list, list[int]]:
+) -> tuple[list, dict[int, str]]:
     """
     Execute a method via the built-in generic subprocess engine.
 
@@ -280,15 +280,15 @@ def _split_tokens(value: Any) -> list[str]:
         return []
 
     semicolon_tokens = [tok.strip() for tok in text.split(";") if tok.strip()]
-    out: list[str] = []
+    tokens_out: list[str] = []
     for token in semicolon_tokens:
         if token.startswith("InChI="):
-            out.append(token)
+            tokens_out.append(token)
             continue
         # Support multi-component entries (e.g. "A.B") in single substrate fields.
         dot_parts = [part.strip() for part in token.split(".") if part.strip()]
-        out.extend(dot_parts if dot_parts else [token])
-    return out
+        tokens_out.extend(dot_parts if dot_parts else [token])
+    return tokens_out
 
 
 def _chemistry_is_valid(row: dict[str, Any], input_format: str) -> bool:

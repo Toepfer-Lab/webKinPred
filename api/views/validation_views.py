@@ -21,6 +21,8 @@ def cancel_validation(request):
     session_id, extraction_error = extract_session_id_from_request(request)
     if extraction_error:
         return extraction_error
+    if session_id is None:
+        return JsonResponse({"error": "session_id required"}, status=400)
 
     # Cancel the session
     success = cancel_session(session_id)

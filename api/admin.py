@@ -31,6 +31,7 @@ class ApiUserAdmin(admin.ModelAdmin):
         ("Admin Notes", {"fields": ("notes",)}),
     )
 
+    @admin.display(description="Today's Usage")
     def quota_status(self, obj):
         usage = get_quota_usage(obj.ip_address)
         used = usage["used"]
@@ -52,8 +53,7 @@ class ApiUserAdmin(admin.ModelAdmin):
             remaining,
         )
 
-    quota_status.short_description = "Today's Usage"
-
+    @admin.display(description="Live Quota Status")
     def quota_info(self, obj):
         if obj.pk:
             usage = get_quota_usage(obj.ip_address)
@@ -76,8 +76,7 @@ class ApiUserAdmin(admin.ModelAdmin):
             )
         return "Save user first to see quota information"
 
-    quota_info.short_description = "Live Quota Status"
-
+    @admin.display(description="Job Summary")
     def job_summary(self, obj):
         if obj.pk:
             total_jobs = obj.total_jobs
@@ -99,22 +98,19 @@ class ApiUserAdmin(admin.ModelAdmin):
             return format_html(html)
         return "Save user first to see job summary"
 
-    job_summary.short_description = "Job Summary"
-
     actions = ["block_users", "unblock_users", "reset_quotas"]
 
+    @admin.action(description="Block selected users")
     def block_users(self, request, queryset):
         count = queryset.update(is_blocked=True)
         self.message_user(request, f"{count} users blocked.")
 
-    block_users.short_description = "Block selected users"
-
+    @admin.action(description="Unblock selected users")
     def unblock_users(self, request, queryset):
         count = queryset.update(is_blocked=False)
         self.message_user(request, f"{count} users unblocked.")
 
-    unblock_users.short_description = "Unblock selected users"
-
+    @admin.action(description="Reset today's quota for selected users")
     def reset_quotas(self, request, queryset):
         from django_redis import get_redis_connection
         from api.utils.quotas import _key
@@ -127,8 +123,6 @@ class ApiUserAdmin(admin.ModelAdmin):
                 count += 1
 
         self.message_user(request, f"Reset quotas for {count} users.")
-
-    reset_quotas.short_description = "Reset today's quota for selected users"
 
 
 # Update existing JobAdmin to use existing download URLs for both input and output
@@ -157,14 +151,14 @@ class JobAdmin(admin.ModelAdmin):
     search_fields = ["public_id", "ip_address", "user__ip_address"]
     readonly_fields = ["public_id", "submission_time", "download_links"]
 
+    @admin.display(description="User IP")
     def user_ip(self, obj):
         if obj.user:
             user_url = reverse("admin:api_apiuser_change", args=[obj.user.pk])
             return format_html('<a href="{}">{}</a>', user_url, obj.user.ip_address)
         return obj.ip_address
 
-    user_ip.short_description = "User IP"
-
+    @admin.display(description="Downloads")
     def download_links(self, obj):
         links = []
 
@@ -182,8 +176,6 @@ class JobAdmin(admin.ModelAdmin):
             links.append('<span style="color: #666;">Job not completed</span>')
 
         return format_html(" | ".join(links))
-
-    download_links.short_description = "Downloads"
 
 
 @admin.register(ApiKey)
@@ -228,23 +220,20 @@ class ApiKeyAdmin(admin.ModelAdmin):
 
     actions = ["revoke_keys", "activate_keys"]
 
+    @admin.display(description="User IP")
     def user_ip(self, obj):
         user_url = reverse("admin:api_apiuser_change", args=[obj.user.pk])
         return format_html('<a href="{}">{}</a>', user_url, obj.user.ip_address)
 
-    user_ip.short_description = "User IP"
-
+    @admin.action(description="Revoke selected API keys")
     def revoke_keys(self, request, queryset):
         count = queryset.update(is_active=False)
         self.message_user(request, f"{count} API key(s) revoked.")
 
-    revoke_keys.short_description = "Revoke selected API keys"
-
+    @admin.action(description="Re-activate selected API keys")
     def activate_keys(self, request, queryset):
         count = queryset.update(is_active=True)
         self.message_user(request, f"{count} API key(s) re-activated.")
-
-    activate_keys.short_description = "Re-activate selected API keys"
 
 
 @admin.register(Sequence)

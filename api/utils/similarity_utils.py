@@ -188,7 +188,7 @@ def parse_mmseqs_results(
     Returns:
         Tuple of (max_identity_dict, mean_identity_dict)
     """
-    identity_lists = {}
+    identity_lists: dict[str, list[float]] = {}
 
     # Parse result file if it exists
     if os.path.exists(result_file):

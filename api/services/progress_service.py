@@ -2,9 +2,11 @@ import redis
 import time
 import os
 import signal
+from typing import Any
+
 from django.conf import settings
 
-redis_conn = redis.from_url(settings.LOGGING_REDIS_URL, decode_responses=True)
+redis_conn: Any = redis.from_url(settings.LOGGING_REDIS_URL, decode_responses=True)
 
 _LOG_TTL = 3600  # seconds — list persists for 1 h after session ends
 

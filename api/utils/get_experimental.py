@@ -1,6 +1,8 @@
-import os, json
+from __future__ import annotations
+
 import pandas as pd
-from pathlib import Path
+from typing import Any
+
 from rdkit import Chem, rdBase
 
 try:
@@ -12,7 +14,7 @@ blocker = rdBase.BlockLogs()
 
 
 def smiles_to_inchi(smiles: str) -> str | None:
-    if type(smiles) is not str:
+    if not isinstance(smiles, str):
         return None
     if "InChI=" in smiles:
         return smiles
@@ -20,12 +22,16 @@ def smiles_to_inchi(smiles: str) -> str | None:
         mol = Chem.MolFromSmiles(smiles)
         if not mol:
             return None
-    except Exception as e:
+    except Exception:
         return None
     return Chem.MolToInchi(mol) if mol else None
 
 
-def lookup_experimental(prot_seqs: str, substrates: str, param_type: str = "Km") -> dict:
+def lookup_experimental(
+    prot_seqs: list[str],
+    substrates: list[str],
+    param_type: str = "Km",
+) -> list[dict[str, Any]]:
     """
     Quick lookup of one experimental datum.
 
@@ -57,7 +63,7 @@ def lookup_experimental(prot_seqs: str, substrates: str, param_type: str = "Km")
         results_km = lookup_experimental(prot_seqs, substrates, "Km")
         results_kcat = lookup_experimental(prot_seqs, substrates, "kcat")
         # join lists of dicts
-        all_results = []
+        all_results: list[dict[str, Any]] = []
         for res_km, res_kcat in zip(results_km, results_kcat):
             all_results.append(res_kcat)
             all_results.append(res_km)
@@ -65,7 +71,7 @@ def lookup_experimental(prot_seqs: str, substrates: str, param_type: str = "Km")
 
     df = pd.read_csv(csv_path)
 
-    results = []
+    results: list[dict[str, Any]] = []
     for idx, (prot_seq, substrate) in enumerate(zip(prot_seqs, substrates)):
         substrate_inchi = smiles_to_inchi(substrate)
         if substrate_inchi is None or "InChI=" not in substrate_inchi:

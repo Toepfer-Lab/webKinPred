@@ -172,7 +172,7 @@ def dlkcat_predictions(
     try:
         with open(output_file, "r") as f:
             next(f)  # skip header
-            raw_values = []
+            raw_values: list[float | None] = []
             for line in f:
                 parts = line.strip().split("\t")
                 try:

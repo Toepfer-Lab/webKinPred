@@ -2,7 +2,8 @@
 HTTP utilities for request validation and response handling.
 """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
+from django.core.files.uploadedfile import UploadedFile
 from django.http import JsonResponse, HttpRequest
 
 
@@ -38,7 +39,7 @@ def validate_post_request_similarity(request: HttpRequest) -> Optional[JsonRespo
 
 def extract_file_from_request(
     request: HttpRequest,
-) -> Tuple[Optional[object], Optional[JsonResponse]]:
+) -> Tuple[Optional[UploadedFile], Optional[JsonResponse]]:
     """
     Extract file from POST request.
 
@@ -57,7 +58,7 @@ def extract_file_from_request(
 
 def extract_csv_file_from_request(
     request: HttpRequest,
-) -> Tuple[Optional[object], Optional[JsonResponse]]:
+) -> Tuple[Optional[UploadedFile], Optional[JsonResponse]]:
     """
     Extract CSV file from POST request (for similarity analysis).
 
@@ -71,7 +72,7 @@ def extract_csv_file_from_request(
     if "file" not in request.FILES:
         return None, JsonResponse({"error": "CSV file not provided"}, status=400)
 
-    csv_file = request.FILES["file"]
+    csv_file = cast(UploadedFile, request.FILES["file"])
     return csv_file, None
 
 
@@ -121,14 +122,14 @@ def validate_post_with_file_request(request: HttpRequest) -> Optional[JsonRespon
         return JsonResponse({"error": "Only POST method is allowed."}, status=405)
 
     if "file" not in request.FILES:
-        return None, JsonResponse({"error": "No file provided."}, status=400)
+        return JsonResponse({"error": "No file provided."}, status=400)
 
     return None
 
 
 def extract_csv_file_with_validation(
     request: HttpRequest,
-) -> Tuple[Optional[object], Optional[JsonResponse]]:
+) -> Tuple[Optional[UploadedFile], Optional[JsonResponse]]:
     """
     Extract and validate CSV file from POST request with format checking.
 
@@ -145,7 +146,11 @@ def extract_csv_file_with_validation(
     if "file" not in request.FILES:
         return None, JsonResponse({"error": "No file provided."}, status=400)
 
-    file = request.FILES["file"]
+    file = request.FILES.get("file")
+    if file is None:
+        return None, JsonResponse({"error": "No file provided."}, status=400)
+    if file.name is None:
+        return None, JsonResponse({"error": "Uploaded file has no filename."}, status=400)
 
     # Check file format
     if not file.name.endswith(".csv"):

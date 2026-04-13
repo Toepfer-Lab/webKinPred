@@ -22,6 +22,7 @@ def run_and_stream(
 
     pid_key = get_pid_key(session_id)
     proc = None
+    rc: int | None = None
     try:
         proc = subprocess.Popen(
             cmd,
@@ -36,13 +37,14 @@ def run_and_stream(
         )
         # Store the PID in Redis with a 15-minute expiry as a safety net
         redis_conn.set(pid_key, proc.pid, ex=900)
-        for raw in proc.stdout:
-            raw = raw.rstrip("\n")
-            # The is_cancelled check is now a secondary guard
-            if is_cancelled(session_id):
-                break
-            safe = sanitise_log_line(raw, TARGET_DBS)
-            push_line(session_id, safe)
+        if proc.stdout is not None:
+            for raw in proc.stdout:
+                raw = raw.rstrip("\n")
+                # The is_cancelled check is now a secondary guard
+                if is_cancelled(session_id):
+                    break
+                safe = sanitise_log_line(raw, TARGET_DBS)
+                push_line(session_id, safe)
         rc = proc.wait()
     finally:
         if proc:
@@ -52,6 +54,9 @@ def run_and_stream(
     if is_cancelled(session_id):
         print(f"[run_and_stream] Step for session {session_id} was cancelled.")
         return
+    if rc is None:
+        raise RuntimeError("Command did not produce an exit code.")
+
     if rc != 0 and not fail_ok:
         push_line(session_id, f"[ERROR] Command failed with exit code {rc}")
         raise subprocess.CalledProcessError(rc, cmd)

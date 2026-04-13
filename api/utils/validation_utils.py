@@ -107,16 +107,18 @@ def validate_single_substrate_schema(dataframe: pd.DataFrame) -> List[Dict[str, 
     Returns:
         List of validation errors
     """
-    invalid_substrates = []
-    val_to_output = {}
+    invalid_substrates: list[dict[str, Any]] = []
+    val_to_output: dict[Any, str | dict[str, Any]] = {}
 
     for i, val in enumerate(dataframe["Substrate"]):
         row_num = i + 1
 
         if val in val_to_output:
-            if val_to_output[val] == "OK":
+            cached = val_to_output[val]
+            if cached == "OK":
                 continue
-            temp = val_to_output[val].copy()
+            assert isinstance(cached, dict)
+            temp = cached.copy()
             temp["row"] = row_num
             invalid_substrates.append(temp)
         else:
@@ -322,7 +324,7 @@ def parse_csv_file(file) -> pd.DataFrame:
     return dataframe.dropna(how="all")  # Remove empty rows
 
 
-def validate_file_format(file, allowed_extensions: List[str] = None) -> Optional[str]:
+def validate_file_format(file, allowed_extensions: Optional[List[str]] = None) -> Optional[str]:
     """
     Validate file format based on allowed extensions.
 

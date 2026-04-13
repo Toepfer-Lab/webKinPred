@@ -207,7 +207,7 @@ def get_experimental_results(
     methods: Dict[str, str],
     targets: List[str],
     dataframe: pd.DataFrame,
-) -> Optional[Dict[str, list]]:
+) -> Optional[Dict[str, list[dict[str, Any]]]]:
     """
     Look up experimental kinetic values when the user has opted in.
 
@@ -223,7 +223,7 @@ def get_experimental_results(
         return None
 
     selected = set(targets)
-    out: Dict[str, list] = {}
+    out: Dict[str, list[dict[str, Any]]] = {}
 
     if "kcat" in selected:
         kcat_method = methods.get("kcat")
@@ -338,6 +338,8 @@ def create_job_status_response_data(job) -> Dict[str, Any]:
     else:
         elapsed_seconds = int(max(0, (now - job.submission_time).total_seconds()))
 
+    queue_seconds: int | None
+    compute_seconds: int | None
     if job.start_time:
         queue_seconds = int(max(0, (job.start_time - job.submission_time).total_seconds()))
         if job.completion_time:
