@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -132,6 +134,7 @@ def _run_command(cmd: str) -> None:
 def _execute_step(step_key: str, seq_ids: list[str], seq_id_to_seq: dict[str, str]) -> None:
     # Optional step override command. If absent, this is a no-op by default.
     # Example env key: GPU_EMBED_STEP_CMD_KINFORM_ESM2_LAYERS
+    # Available format args: {step_key}, {seq_ids}, {seq_count}, {seq_id_to_seq_file}
     env_key = f"GPU_EMBED_STEP_CMD_{step_key.upper()}"
     cmd = str(os.environ.get(env_key, "")).strip()
     if not cmd:
@@ -139,8 +142,23 @@ def _execute_step(step_key: str, seq_ids: list[str], seq_id_to_seq: dict[str, st
 
     seq_ids_arg = ",".join(seq_ids)
     seq_count = len(seq_ids)
-    cmd = cmd.format(step_key=step_key, seq_ids=seq_ids_arg, seq_count=seq_count)
-    _run_command(cmd)
+    step_seq_map = {sid: seq_id_to_seq[sid] for sid in seq_ids if sid in seq_id_to_seq}
+
+    tmp_file: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
+            json.dump(step_seq_map, fh)
+            tmp_file = fh.name
+        cmd = cmd.format(
+            step_key=step_key,
+            seq_ids=seq_ids_arg,
+            seq_count=seq_count,
+            seq_id_to_seq_file=tmp_file,
+        )
+        _run_command(cmd)
+    finally:
+        if tmp_file and os.path.exists(tmp_file):
+            os.unlink(tmp_file)
 
 
 def _run_job(job_id: str) -> None:

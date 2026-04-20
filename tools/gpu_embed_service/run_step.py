@@ -296,6 +296,16 @@ def main() -> int:
     parser.add_argument("--repo-root", default=os.environ.get("GPU_EMBED_REPO_ROOT", ""))
     parser.add_argument("--media-path", default=os.environ.get("KINFORM_MEDIA_PATH", ""))
     parser.add_argument("--tools-path", default=os.environ.get("KINFORM_TOOLS_PATH", ""))
+    parser.add_argument(
+        "--seq-id-to-seq-json",
+        default="",
+        help="JSON string mapping seq_id→sequence (skips seqmap DB lookup)",
+    )
+    parser.add_argument(
+        "--seq-id-to-seq-file",
+        default="",
+        help="Path to JSON file mapping seq_id→sequence (skips seqmap DB lookup)",
+    )
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve() if args.repo_root else _default_repo_root().resolve()
@@ -303,12 +313,19 @@ def main() -> int:
     tools_path = Path(args.tools_path).resolve() if args.tools_path else (repo_root / "tools").resolve()
     seq_ids = _parse_seq_ids(args.seq_ids)
 
+    seq_id_to_seq: dict[str, str] | None = None
+    if args.seq_id_to_seq_file:
+        seq_id_to_seq = json.loads(Path(args.seq_id_to_seq_file).read_text(encoding="utf-8"))
+    elif args.seq_id_to_seq_json:
+        seq_id_to_seq = json.loads(args.seq_id_to_seq_json)
+
     run_step(
         step=args.step,
         seq_ids=seq_ids,
         repo_root=repo_root,
         media_path=media_path,
         tools_path=tools_path,
+        seq_id_to_seq=seq_id_to_seq,
     )
     return 0
 
