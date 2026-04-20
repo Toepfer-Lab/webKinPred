@@ -79,7 +79,7 @@ def build_extra_info(exp: dict, param_type: str, prediction: str = "", model_key
 
     # full reaction, if both sides available
     if not _nullish(exp.get("all_substrates")) and not _nullish(exp.get("all_products")):
-        parts.append(f"Full reaction is:\n{exp['all_substrates']} --> {exp['all_products']}")
+        parts.append(f"Full reaction is: {exp['all_substrates']} --> {exp['all_products']}")
 
     # temperature / pH
     temp = None if _nullish(exp.get("temperature")) else exp["temperature"]
