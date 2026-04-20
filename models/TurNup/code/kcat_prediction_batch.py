@@ -8,6 +8,7 @@ from enzyme_representations import *
 import sys
 import pandas as pd
 import os
+from pathlib import Path
 from os.path import join
 
 import warnings
@@ -15,14 +16,18 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Use environment variables to determine paths
-if os.environ.get("TURNUP_MEDIA_PATH"):
-    # Docker environment
+_HERE = Path(__file__).resolve()
+_REPO_ROOT = _HERE.parents[3]
+_DEFAULT_MEDIA = _REPO_ROOT / "media"
+
+_media_path = Path(os.environ.get("TURNUP_MEDIA_PATH", str(_DEFAULT_MEDIA)))
+if os.environ.get("TURNUP_DATA_PATH"):
+    data_dir = os.environ.get("TURNUP_DATA_PATH")
+elif Path("/app/models/TurNup/data").exists():
     data_dir = "/app/models/TurNup/data"
-    SEQ_VEC_DIR = os.environ.get("TURNUP_MEDIA_PATH") + "/sequence_info/esm1b_turnup"
 else:
-    # Local environment
-    data_dir = "/home/saleh/webKinPred/models/TurNup/data"
-    SEQ_VEC_DIR = "/home/saleh/webKinPred/media/sequence_info/esm1b_turnup"
+    data_dir = str((_HERE.parents[1] / "data").resolve())
+SEQ_VEC_DIR = str((_media_path / "sequence_info" / "esm1b_turnup").resolve())
 
 
 def kcat_prediction_batch(substrates, products, enzymes):

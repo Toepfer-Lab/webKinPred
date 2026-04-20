@@ -30,8 +30,15 @@ from api.services import gpu_embed_service as ges  # noqa: E402
 
 class GpuEmbedServiceTests(unittest.TestCase):
     def test_gpu_submit_sparse_steps_and_tracker_order(self):
-        plan = SimpleNamespace(
+        initial_plan = SimpleNamespace(
             need_computation=2,
+            gpu_supported=True,
+            gpu_reason=None,
+            profile="kinform_full",
+            seq_id_to_seq={"sid_1": "AAAA", "sid_2": "BBBB"},
+        )
+        post_plan = SimpleNamespace(
+            need_computation=0,
             gpu_supported=True,
             gpu_reason=None,
             profile="kinform_full",
@@ -55,7 +62,7 @@ class GpuEmbedServiceTests(unittest.TestCase):
                 return {"job_id": "job_1"}
             return {"status": "done"}
 
-        with patch.object(ges, "build_embedding_plan", return_value=plan):
+        with patch.object(ges, "build_embedding_plan", side_effect=[initial_plan, post_plan]):
             with patch.object(
                 ges,
                 "gpu_step_work",
@@ -126,6 +133,84 @@ class GpuEmbedServiceTests(unittest.TestCase):
         self.assertEqual(mock_http.call_count, 1)
         self.assertTrue(status1["online"])
         self.assertEqual(status2["gpu_name"], "RTX A4500")
+
+    def test_fail_closed_raises_when_supported_gpu_is_unavailable(self):
+        plan = SimpleNamespace(
+            need_computation=1,
+            gpu_supported=True,
+            gpu_reason=None,
+            profile="turnup_esm1b",
+            seq_id_to_seq={"sid_1": "AAAA"},
+        )
+
+        with patch.dict("os.environ", {"GPU_EMBED_FAIL_CLOSED": "1"}):
+            with patch.object(ges, "build_embedding_plan", return_value=plan):
+                with patch.object(ges, "gpu_step_work", return_value={"turnup_esm1b": ["sid_1"]}):
+                    with patch.object(ges, "_base_url", return_value="http://gpu"):
+                        with patch.object(ges, "get_gpu_status", return_value={"online": False, "reason": "offline"}):
+                            with self.assertRaises(RuntimeError):
+                                ges.run_gpu_precompute_if_available(
+                                    job_public_id="job_z",
+                                    method_key="TurNup",
+                                    target="kcat",
+                                    valid_sequences=["AAAA"],
+                                    env={},
+                                )
+
+    def test_fail_closed_does_not_raise_for_unsupported_method(self):
+        plan = SimpleNamespace(
+            need_computation=1,
+            gpu_supported=False,
+            gpu_reason="gpu_offload_phase2",
+            profile=None,
+            seq_id_to_seq={"sid_1": "AAAA"},
+        )
+
+        with patch.dict("os.environ", {"GPU_EMBED_FAIL_CLOSED": "1"}):
+            with patch.object(ges, "build_embedding_plan", return_value=plan):
+                result = ges.run_gpu_precompute_if_available(
+                    job_public_id="job_u",
+                    method_key="CatPred",
+                    target="kcat",
+                    valid_sequences=["AAAA"],
+                    env={},
+                )
+
+        self.assertFalse(result.completed)
+        self.assertEqual(result.reason, "gpu_offload_phase2")
+
+    def test_fail_closed_raises_when_remote_reports_done_but_outputs_missing(self):
+        initial_plan = SimpleNamespace(
+            need_computation=1,
+            gpu_supported=True,
+            gpu_reason=None,
+            profile="prot_t5_mean",
+            seq_id_to_seq={"sid_1": "AAAA"},
+        )
+        post_plan = SimpleNamespace(
+            need_computation=1,
+            gpu_supported=True,
+            gpu_reason=None,
+            profile="prot_t5_mean",
+            seq_id_to_seq={"sid_1": "AAAA"},
+        )
+
+        with patch.dict("os.environ", {"GPU_EMBED_FAIL_CLOSED": "1"}):
+            with patch.object(ges, "build_embedding_plan", side_effect=[initial_plan, post_plan]):
+                with patch.object(ges, "gpu_step_work", return_value={"prot_t5_mean": ["sid_1"]}):
+                    with patch.object(ges, "_base_url", return_value="http://gpu"):
+                        with patch.object(ges, "get_gpu_status", return_value={"online": True}):
+                            with patch.object(ges, "start_embedding_tracking", return_value=True):
+                                with patch.object(ges, "_http_json", return_value={"job_id": "job_1"}):
+                                    with patch.object(ges, "_poll_job", return_value={"status": "done"}):
+                                        with self.assertRaises(RuntimeError):
+                                            ges.run_gpu_precompute_if_available(
+                                                job_public_id="job_fc",
+                                                method_key="UniKP",
+                                                target="kcat",
+                                                valid_sequences=["AAAA"],
+                                                env={},
+                                            )
 
 
 if __name__ == "__main__":

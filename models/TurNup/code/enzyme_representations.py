@@ -4,28 +4,30 @@ import torch
 import esm
 import os
 import sys
+from pathlib import Path
 from os.path import join
 import subprocess
 
 # Use environment variables to determine paths
-data_dir = (
-    os.environ.get("TURNUP_MEDIA_PATH", "/home/saleh/webKinPred")
-    + "/../models/TurNup/data"
-)
-if os.environ.get("TURNUP_MEDIA_PATH"):
-    # Docker environment
+_HERE = Path(__file__).resolve()
+_REPO_ROOT = _HERE.parents[3]
+_DEFAULT_MEDIA = _REPO_ROOT / "media"
+_DEFAULT_TOOLS = _REPO_ROOT / "tools"
+
+_media_path = Path(os.environ.get("TURNUP_MEDIA_PATH", str(_DEFAULT_MEDIA)))
+_tools_path = Path(os.environ.get("TURNUP_TOOLS_PATH", str(_DEFAULT_TOOLS)))
+
+if os.environ.get("TURNUP_DATA_PATH"):
+    data_dir = os.environ.get("TURNUP_DATA_PATH")
+elif Path("/app/models/TurNup/data").exists():
     data_dir = "/app/models/TurNup/data"
-    SEQ_VEC_DIR = os.environ.get("TURNUP_MEDIA_PATH") + "/sequence_info/esm1b_turnup"
-    SEQMAP_PY = sys.executable  # Use current Python interpreter in Docker
-    SEQMAP_CLI = os.environ.get("TURNUP_TOOLS_PATH") + "/seqmap/main.py"
-    SEQMAP_DB = os.environ.get("TURNUP_MEDIA_PATH") + "/sequence_info/seqmap.sqlite3"
 else:
-    # Local environment
-    data_dir = "/home/saleh/webKinPred/models/TurNup/data"
-    SEQ_VEC_DIR = "/home/saleh/webKinPred/media/sequence_info/esm1b_turnup"
-    SEQMAP_PY = "/home/saleh/webKinPredEnv/bin/python"
-    SEQMAP_CLI = "/home/saleh/webKinPred/tools/seqmap/main.py"
-    SEQMAP_DB = "/home/saleh/webKinPred/media/sequence_info/seqmap.sqlite3"
+    data_dir = str((_HERE.parents[1] / "data").resolve())
+
+SEQ_VEC_DIR = str((_media_path / "sequence_info" / "esm1b_turnup").resolve())
+SEQMAP_PY = sys.executable
+SEQMAP_CLI = str((_tools_path / "seqmap" / "main.py").resolve())
+SEQMAP_DB = str((_media_path / "sequence_info" / "seqmap.sqlite3").resolve())
 
 aa = set("abcdefghiklmnpqrstxvwyzv".upper())
 

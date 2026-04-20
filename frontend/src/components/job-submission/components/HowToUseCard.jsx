@@ -194,7 +194,7 @@ export default function HowToUseCard({ methods = {} }) {
           >
             <span className="benchmark-toggle-left">
               <Speedometer2 size={13} className="benchmark-toggle-icon" />
-              Timing Benchmark
+              Runtime Benchmark
             </span>
             {showBenchmark ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>

@@ -39,8 +39,12 @@ from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
 
 PROTT5XL_MODEL_PATH = "Rostlab/prot_t5_xl_uniref50"
-if os.environ.get("KINFORM_MEDIA_PATH"):
-    PROTT5XL_MODEL_PATH = "/app/models/UniKP-main/models/protT5_xl/prot_t5_xl_uniref50"
+if os.environ.get("KINFORM_T5_MODEL_PATH"):
+    PROTT5XL_MODEL_PATH = os.environ.get("KINFORM_T5_MODEL_PATH")
+elif os.environ.get("KINFORM_MEDIA_PATH"):
+    docker_model = Path("/app/models/UniKP-main/models/protT5_xl/prot_t5_xl_uniref50")
+    if docker_model.exists():
+        PROTT5XL_MODEL_PATH = str(docker_model)
 
 # --------------------------------------------------------------------------- #
 #                              HELPER FUNCTIONS                               #

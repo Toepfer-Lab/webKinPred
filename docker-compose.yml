@@ -37,6 +37,7 @@ services:
       - GPU_EMBED_SERVICE_TOKEN=${GPU_EMBED_SERVICE_TOKEN:-}
       - GPU_EMBED_HEALTH_TTL_SECONDS=${GPU_EMBED_HEALTH_TTL_SECONDS:-10}
       - GPU_EMBED_JOB_TIMEOUT_SECONDS=${GPU_EMBED_JOB_TIMEOUT_SECONDS:-1200}
+      - GPU_EMBED_FAIL_CLOSED=${GPU_EMBED_FAIL_CLOSED:-0}
       
     command: gunicorn webKinPred.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120
     depends_on:
@@ -98,6 +99,7 @@ services:
       - GPU_EMBED_SERVICE_TOKEN=${GPU_EMBED_SERVICE_TOKEN:-}
       - GPU_EMBED_HEALTH_TTL_SECONDS=${GPU_EMBED_HEALTH_TTL_SECONDS:-10}
       - GPU_EMBED_JOB_TIMEOUT_SECONDS=${GPU_EMBED_JOB_TIMEOUT_SECONDS:-1200}
+      - GPU_EMBED_FAIL_CLOSED=${GPU_EMBED_FAIL_CLOSED:-0}
     depends_on:
       redis:
         condition: service_healthy
@@ -137,6 +139,7 @@ services:
       - GPU_EMBED_SERVICE_TOKEN=${GPU_EMBED_SERVICE_TOKEN:-}
       - GPU_EMBED_HEALTH_TTL_SECONDS=${GPU_EMBED_HEALTH_TTL_SECONDS:-10}
       - GPU_EMBED_JOB_TIMEOUT_SECONDS=${GPU_EMBED_JOB_TIMEOUT_SECONDS:-1200}
+      - GPU_EMBED_FAIL_CLOSED=${GPU_EMBED_FAIL_CLOSED:-0}
     depends_on:
       redis:
         condition: service_healthy

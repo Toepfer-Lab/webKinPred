@@ -331,7 +331,7 @@ function JobStatus() {
   }, [jobStatus]);
 
   return (
-    <Container className="mt-5 pb-5">
+    <Container className="mt-1 pb-5">
       <Row className="justify-content-center">
         <Col md={10} lg={9}>
           <Card className="section-container job-status-card mb-4">

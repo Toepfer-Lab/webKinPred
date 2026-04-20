@@ -43,6 +43,13 @@ def _env_int(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = str(os.environ.get(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _base_url() -> str:
     return str(os.environ.get("GPU_EMBED_SERVICE_URL", "")).strip().rstrip("/")
 
@@ -146,8 +153,18 @@ def run_gpu_precompute_if_available(
     valid_sequences: list[str],
     env: dict | None,
 ) -> GpuPrecomputeResult:
+    fail_closed = _env_bool("GPU_EMBED_FAIL_CLOSED", default=False)
+
+    def _finish(result: GpuPrecomputeResult) -> GpuPrecomputeResult:
+        if fail_closed and not result.completed:
+            raise RuntimeError(
+                f"GPU precompute required but incomplete for {method_key}/{target}: "
+                f"{result.reason or 'unknown_reason'}"
+            )
+        return result
+
     if not valid_sequences:
-        return GpuPrecomputeResult(False, False, False, False, "no_valid_sequences")
+        return _finish(GpuPrecomputeResult(False, False, False, False, "no_valid_sequences"))
 
     env_data = env or {}
     try:
@@ -158,24 +175,27 @@ def run_gpu_precompute_if_available(
             env=env_data,
         )
     except Exception as exc:
-        return GpuPrecomputeResult(False, False, False, False, f"plan_failed: {exc}")
+        return _finish(GpuPrecomputeResult(False, False, False, False, f"plan_failed: {exc}"))
 
     if plan.need_computation <= 0:
-        return GpuPrecomputeResult(False, False, True, False, "cache_complete")
+        return _finish(GpuPrecomputeResult(False, False, True, False, "cache_complete"))
     if not plan.gpu_supported:
+        # Keep unsupported methods fail-open even in strict mode.
         return GpuPrecomputeResult(False, False, False, False, plan.gpu_reason or "unsupported")
 
     base = _base_url()
     if not base:
-        return GpuPrecomputeResult(False, False, False, False, "not_configured")
+        return _finish(GpuPrecomputeResult(False, False, False, False, "not_configured"))
 
     status = get_gpu_status()
     if not status.get("online"):
-        return GpuPrecomputeResult(True, False, False, True, status.get("reason") or "offline")
+        return _finish(
+            GpuPrecomputeResult(True, False, False, True, status.get("reason") or "offline")
+        )
 
     step_work = gpu_step_work(plan)
     if not step_work:
-        return GpuPrecomputeResult(True, False, True, False, "no_missing_gpu_steps")
+        return _finish(GpuPrecomputeResult(True, False, True, False, "no_missing_gpu_steps"))
 
     missing_seq_ids = sorted({seq_id for seq_ids in step_work.values() for seq_id in seq_ids})
     seq_id_to_seq = {seq_id: plan.seq_id_to_seq[seq_id] for seq_id in missing_seq_ids if seq_id in plan.seq_id_to_seq}
@@ -201,11 +221,40 @@ def run_gpu_precompute_if_available(
         response = _http_json("POST", f"{base}/embed/jobs", payload=payload)
         gpu_job_id = str(response.get("job_id", "")).strip()
         if not gpu_job_id:
-            return GpuPrecomputeResult(True, True, False, True, "missing_job_id")
+            return _finish(GpuPrecomputeResult(True, True, False, True, "missing_job_id"))
 
         polled = _poll_job(base, gpu_job_id)
         if polled["status"] == "done":
-            return GpuPrecomputeResult(True, True, True, False, "done")
-        return GpuPrecomputeResult(True, True, False, True, polled["status"])
+            # Remote service may report "done" while writing no cache files
+            # (for example during smoke/no-op command wiring). Re-check local
+            # cache state before treating GPU precompute as completed.
+            try:
+                post_plan = build_embedding_plan(
+                    method_key=method_key,
+                    target=target,
+                    sequences=valid_sequences,
+                    env=env_data,
+                )
+            except Exception as exc:
+                return _finish(
+                    GpuPrecomputeResult(True, True, False, True, f"postcheck_failed: {exc}")
+                )
+
+            if post_plan.need_computation > 0:
+                return _finish(
+                    GpuPrecomputeResult(
+                        True,
+                        True,
+                        False,
+                        True,
+                        f"incomplete_remote_outputs:{post_plan.need_computation}",
+                    )
+                )
+
+            return _finish(GpuPrecomputeResult(True, True, True, False, "done"))
+        return _finish(GpuPrecomputeResult(True, True, False, True, polled["status"]))
+    except RuntimeError:
+        # Preserve strict-mode failures as-is (do not wrap them again).
+        raise
     except Exception as exc:
-        return GpuPrecomputeResult(True, True, False, True, f"gpu_request_failed: {exc}")
+        return _finish(GpuPrecomputeResult(True, True, False, True, f"gpu_request_failed: {exc}"))

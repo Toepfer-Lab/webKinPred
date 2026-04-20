@@ -41,6 +41,19 @@ Minimal FastAPI service for remote GPU embedding offload.
 
 If no step command is configured for a step, it is treated as a no-op.
 
+### Real Step Commands (GPU host)
+
+Use the bundled step runner so jobs write real cache artifacts:
+
+```bash
+export GPU_EMBED_STEP_CMD_KINFORM_PSEQ2SITES="/usr/bin/python3 /path/to/webKinPred/tools/gpu_embed_service/run_step.py --step kinform_pseq2sites --seq-ids '{seq_ids}'"
+export GPU_EMBED_STEP_CMD_KINFORM_ESM2_LAYERS="/usr/bin/python3 /path/to/webKinPred/tools/gpu_embed_service/run_step.py --step kinform_esm2_layers --seq-ids '{seq_ids}'"
+export GPU_EMBED_STEP_CMD_KINFORM_ESMC_LAYERS="/usr/bin/python3 /path/to/webKinPred/tools/gpu_embed_service/run_step.py --step kinform_esmc_layers --seq-ids '{seq_ids}'"
+export GPU_EMBED_STEP_CMD_KINFORM_PROTT5_LAYERS="/usr/bin/python3 /path/to/webKinPred/tools/gpu_embed_service/run_step.py --step kinform_prott5_layers --seq-ids '{seq_ids}'"
+export GPU_EMBED_STEP_CMD_PROT_T5_MEAN="/usr/bin/python3 /path/to/webKinPred/tools/gpu_embed_service/run_step.py --step prot_t5_mean --seq-ids '{seq_ids}'"
+export GPU_EMBED_STEP_CMD_TURNUP_ESM1B="/usr/bin/python3 /path/to/webKinPred/tools/gpu_embed_service/run_step.py --step turnup_esm1b --seq-ids '{seq_ids}'"
+```
+
 ## Run
 
 ```bash
