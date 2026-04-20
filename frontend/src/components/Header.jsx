@@ -2,7 +2,6 @@
 import React from 'react';
 import { Navbar, Container, Nav } from 'react-bootstrap';
 import { Link } from 'react-router-dom';
-import GpuStatus from './GpuStatus';
 import '../styles/components/navbar.css';
 
 function Header() {
@@ -13,9 +12,6 @@ function Header() {
         <Navbar.Toggle aria-controls="basic-navbar-nav" />
         <Navbar.Collapse id="basic-navbar-nav">
           <Nav className="ml-auto">
-            <Nav.Item className="gpu-status-nav-item">
-              <GpuStatus />
-            </Nav.Item>
             <Nav.Link as={Link} to="/track-job">Track Job</Nav.Link>
             <Nav.Link as={Link} to="/api-docs">API</Nav.Link>
             <Nav.Link as={Link} to="/contribute">Contribute</Nav.Link>

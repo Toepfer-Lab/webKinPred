@@ -16,7 +16,7 @@ export default function JobSubmissionForm() {
   const state = useJobSubmission();
 
   return (
-    <Container className="mt-5 pb-5">
+    <Container className="mt-1 pb-5">
       <Row className="justify-content-center">
         <Col md={10}>
           <HowToUseCard methods={state.methods || {}} />

@@ -8,6 +8,7 @@ import ApiDocs from './components/ApiDocs/ApiDocs';
 import Contribute from './components/Contribute';
 import NotFound from './components/NotFound';
 import Header from './components/Header';
+import GpuStatus from './components/GpuStatus';
 import ProteinBackground from './components/ProteinBackground';
 import Footer from './components/Footer';
 import './styles/App.css';
@@ -18,6 +19,7 @@ function App() {
       <ProteinBackground />
       <div className="app-container">
         <Header />
+        <GpuStatus />
         <main className="main-content">
           <Routes>
             <Route path="/" element={<JobSubmissionForm />} />

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { OverlayTrigger, Tooltip } from 'react-bootstrap';
 import apiClient from './appClient';
 
 function formatGb(value) {
@@ -7,19 +6,6 @@ function formatGb(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return `${n.toFixed(1)} GB`;
-}
-
-function StatusBadge({ className, tooltipText, children }) {
-  return (
-    <OverlayTrigger
-      placement="bottom"
-      overlay={<Tooltip className="gpu-status-tooltip">{tooltipText}</Tooltip>}
-    >
-      <span className={`gpu-status-badge ${className}`}>
-        {children}
-      </span>
-    </OverlayTrigger>
-  );
 }
 
 export default function GpuStatus() {
@@ -50,24 +36,26 @@ export default function GpuStatus() {
   if (!status) return null;
 
   if (!status.configured || !status.online) {
-    const tooltip = status.configured
-      ? 'GPU service is offline. GPU is expected to be available between 5 PM – 8 AM GMT.'
-      : 'Running in CPU mode. GPU is expected to be available between 5 PM – 8 AM GMT.';
     return (
-      <StatusBadge className="gpu-status-cpu" tooltipText={tooltip}>
-        <span className="gpu-status-dot" />
-        CPU mode
-      </StatusBadge>
+      <div className="gpu-status-bar gpu-status-bar--cpu">
+        <span className="gpu-status-bar__dot" />
+        <span className="gpu-status-bar__label">CPU Mode</span>
+        <span className="gpu-status-bar__sep">·</span>
+        <span className="gpu-status-bar__detail">
+          GPU acceleration available 5 PM – 8 AM GMT
+        </span>
+      </div>
     );
   }
 
   const gpuName = status.gpu_name || 'GPU';
   const free = formatGb(status.free_vram_gb);
-  const freeLabel = free ? ` · ${free} free` : '';
   return (
-    <StatusBadge className="gpu-status-online" tooltipText={`GPU online: ${gpuName}${freeLabel}`}>
-      <span className="gpu-status-dot" />
-      {gpuName}{freeLabel}
-    </StatusBadge>
+    <div className="gpu-status-bar gpu-status-bar--online">
+      <span className="gpu-status-bar__dot" />
+      <span className="gpu-status-bar__label">GPU Accelerated</span>
+      <span className="gpu-status-bar__sep">·</span>
+      <span className="gpu-status-bar__detail">{gpuName}{free ? ` · ${free} free` : ''}</span>
+    </div>
   );
 }
