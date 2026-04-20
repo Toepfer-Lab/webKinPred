@@ -3,6 +3,7 @@ import { OverlayTrigger, Tooltip } from 'react-bootstrap';
 import apiClient from './appClient';
 
 function formatGb(value) {
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return `${n.toFixed(1)} GB`;
