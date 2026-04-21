@@ -33,6 +33,7 @@ from api.methods.base import PredictionError
 from api.methods.registry import get as get_method
 from api.models import Job
 from api.prediction_engines.generic_subprocess import run_generic_subprocess_prediction
+from api.services.gpu_precompute_status_service import clear_gpu_precompute_status
 from api.services.similarity_service import append_kcat_similarity_columns_to_output_csv
 from api.utils.extra_info import _source, build_extra_info
 from api.utils.handle_long import get_valid_indices, truncate_sequences
@@ -49,6 +50,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Celery tasks
 # ---------------------------------------------------------------------------
+
+
+def _safe_clear_gpu_precompute_status(public_id: str) -> None:
+    try:
+        clear_gpu_precompute_status(public_id)
+    except Exception:
+        # Redis telemetry cleanup is best-effort only.
+        pass
 
 
 @shared_task
@@ -75,6 +84,7 @@ def run_prediction(
         Pre-fetched experimental values to merge into the output, or None.
     """
     job = Job.objects.get(public_id=public_id)
+    _safe_clear_gpu_precompute_status(public_id)
     job.status = "Processing"
     job.start_time = timezone.now()
     job.save(update_fields=["status", "start_time"])
@@ -139,6 +149,7 @@ def run_both_prediction(
         Pre-fetched experimental values to merge into the output, or None.
     """
     job = Job.objects.get(public_id=public_id)
+    _safe_clear_gpu_precompute_status(public_id)
     job.status = "Processing"
     job.start_time = timezone.now()
     job.predictions_made = 0
@@ -207,6 +218,7 @@ def run_multi_prediction(
         Optional pre-fetched experimental rows keyed by target.
     """
     job = Job.objects.get(public_id=public_id)
+    _safe_clear_gpu_precompute_status(public_id)
     job.status = "Processing"
     job.start_time = timezone.now()
     job.predictions_made = 0

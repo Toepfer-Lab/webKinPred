@@ -1,13 +1,13 @@
 """
 Benchmark kcat inference latency for all production API kcat-capable methods.
 
-For each method, this command:
-1) Generates 1,000 reactions from 100 unique proteins (defaults), where
-   proteins have average length 400 and max length 1,000.
-2) Runs one prediction job with fresh proteins (uncached embedding path).
-3) Runs a second prediction job with the exact same proteins (cached path).
-4) Prints a readable per-method summary:
-   DLKcat - 100.00s compute (not cached), 10.00s compute (cached)
+For each method, this command can run up to three benchmark modes:
+1) uncached CPU baseline (existing path)
+2) uncached GPU precompute path (requires actual GPU execution)
+3) cached repeat (existing path)
+
+Example summary:
+  DLKcat - 100.00s compute (not cached cpu), n/a compute (not cached gpu), 10.00s compute (cached)
 
 The command submits jobs to the public REST API (/api/v1/submit/) and polls
 /api/v1/status/<job_id>/, reporting only server-side compute time
@@ -50,6 +50,7 @@ PRODUCT_POOL = [
     "CC(=O)N",  # acetamide
 ]
 DEFAULT_API_BASE_URL = "https://predictor.openkinetics.org/api/v1"
+GPU_OFFLOAD_KCAT_METHOD_IDS = {"KinForm-H", "KinForm-L", "UniKP", "TurNup", "CataPro"}
 
 
 @dataclass
@@ -58,19 +59,24 @@ class SingleRunResult:
     status: str
     error_message: str
     public_id: str
+    gpu_used: bool | None = None
+    gpu_attempted: bool | None = None
+    gpu_completed: bool | None = None
+    gpu_reason: str | None = None
 
 
 @dataclass
 class MethodBenchmarkResult:
     method_key: str
-    uncached: SingleRunResult
+    uncached_cpu: SingleRunResult
+    uncached_gpu: SingleRunResult
     cached: SingleRunResult
 
 
 class Command(BaseCommand):
     help = (
         "Benchmark kcat inference time for each registered kcat-capable method, "
-        "running once uncached and once cached."
+        "running uncached cpu, uncached gpu, and cached modes."
     )
 
     def add_arguments(self, parser):
@@ -104,6 +110,14 @@ class Command(BaseCommand):
             help=(
                 "Run the exact same benchmark flow but override workload to "
                 "10 reactions and 1 unique protein."
+            ),
+        )
+        parser.add_argument(
+            "--gpu-only",
+            action="store_true",
+            help=(
+                "Run only the uncached GPU benchmark path. CPU uncached/cached "
+                "runs are skipped."
             ),
         )
         parser.add_argument(
@@ -173,6 +187,7 @@ class Command(BaseCommand):
         avg_seq_len = options["avg_seq_len"]
         max_seq_len = options["max_seq_len"]
         testmode = options["testmode"]
+        gpu_only = options["gpu_only"]
         methods_filter = options["methods"]
         handle_long_sequences = options["handle_long_sequences"]
         api_base_url = options["api_base_url"].rstrip("/")
@@ -244,18 +259,28 @@ class Command(BaseCommand):
         self.stdout.write(
             "Reporting metric: computeSeconds from /api/v1/status/ (queueSeconds ignored)."
         )
+        projected_jobs_per_method = 1 if gpu_only else 3
         self.stdout.write(
-            "Projected quota cost: "
-            f"{len(selected_keys) * 2 * num_reactions} rows "
-            "(2 jobs per method)."
+            "Projected quota cost (upper bound): "
+            f"{len(selected_keys) * projected_jobs_per_method * num_reactions} rows "
+            f"({projected_jobs_per_method} jobs per method)."
         )
         self.stdout.write(
             f"Seed: {run_seed} ({'fixed' if options['seed'] is not None else 'auto-generated'})"
         )
-        self.stdout.write(
-            "Uncached run uses fresh proteins per method; cached run repeats "
-            "the same proteins for that method."
-        )
+        if gpu_only:
+            self.stdout.write(
+                "GPU-only mode: only uncached GPU runs are executed."
+            )
+        else:
+            self.stdout.write(
+                "Uncached CPU run uses fresh proteins per method; cached run repeats "
+                "the same proteins for that method."
+            )
+            self.stdout.write(
+                "Uncached GPU run uses a second fresh protein set per method and "
+                "is required to report actual GPU usage."
+            )
         self.stdout.write(
             "Cross-method overlap is disabled: protein sequences are unique across methods "
             "to avoid shared PLM cache effects."
@@ -268,62 +293,104 @@ class Command(BaseCommand):
         for idx, method_key in enumerate(selected_keys, start=1):
             self.stdout.write(f"[{idx}/{len(selected_keys)}] {method_key}")
             method_seed = self._derive_method_seed(run_seed, method_key)
-            rng = random.Random(method_seed)
+            rng_cpu = random.Random(method_seed)
+            rng_gpu = random.Random(method_seed ^ 0x9E3779B97F4A7C15)
 
-            proteins = self._generate_unique_proteins(
-                rng=rng,
-                num_proteins=num_proteins,
-                avg_seq_len=avg_seq_len,
-                max_seq_len=max_seq_len,
-                forbidden_sequences=used_sequences,
-            )
-            used_sequences.update(proteins)
-            df_input = self._build_reaction_dataframe(
-                proteins=proteins,
-                num_reactions=num_reactions,
-            )
+            if gpu_only:
+                uncached_cpu_result = self._skipped_run("gpu_only_mode")
+                cached_result = self._skipped_run("gpu_only_mode")
+            else:
+                proteins_cpu = self._generate_unique_proteins(
+                    rng=rng_cpu,
+                    num_proteins=num_proteins,
+                    avg_seq_len=avg_seq_len,
+                    max_seq_len=max_seq_len,
+                    forbidden_sequences=used_sequences,
+                )
+                used_sequences.update(proteins_cpu)
+                df_cpu = self._build_reaction_dataframe(
+                    proteins=proteins_cpu,
+                    num_reactions=num_reactions,
+                )
 
-            uncached_result = self._run_single_benchmark(
-                session=session,
-                api_base_url=api_base_url,
-                method_key=method_key,
-                input_df=df_input,
-                handle_long_sequences=handle_long_sequences,
-                poll_seconds=poll_seconds,
-                timeout_seconds=timeout_seconds,
-                request_timeout_seconds=request_timeout_seconds,
-            )
-            cached_result = self._run_single_benchmark(
-                session=session,
-                api_base_url=api_base_url,
-                method_key=method_key,
-                input_df=df_input,
-                handle_long_sequences=handle_long_sequences,
-                poll_seconds=poll_seconds,
-                timeout_seconds=timeout_seconds,
-                request_timeout_seconds=request_timeout_seconds,
-            )
+                uncached_cpu_result = self._run_single_benchmark(
+                    session=session,
+                    api_base_url=api_base_url,
+                    method_key=method_key,
+                    input_df=df_cpu,
+                    handle_long_sequences=handle_long_sequences,
+                    poll_seconds=poll_seconds,
+                    timeout_seconds=timeout_seconds,
+                    request_timeout_seconds=request_timeout_seconds,
+                    require_gpu=False,
+                )
+                cached_result = self._run_single_benchmark(
+                    session=session,
+                    api_base_url=api_base_url,
+                    method_key=method_key,
+                    input_df=df_cpu,
+                    handle_long_sequences=handle_long_sequences,
+                    poll_seconds=poll_seconds,
+                    timeout_seconds=timeout_seconds,
+                    request_timeout_seconds=request_timeout_seconds,
+                    require_gpu=False,
+                )
+
+            if method_key not in GPU_OFFLOAD_KCAT_METHOD_IDS:
+                uncached_gpu_result = self._skipped_run("gpu_offload_not_supported_for_method")
+            else:
+                proteins_gpu = self._generate_unique_proteins(
+                    rng=rng_gpu,
+                    num_proteins=num_proteins,
+                    avg_seq_len=avg_seq_len,
+                    max_seq_len=max_seq_len,
+                    forbidden_sequences=used_sequences,
+                )
+                used_sequences.update(proteins_gpu)
+                df_gpu = self._build_reaction_dataframe(
+                    proteins=proteins_gpu,
+                    num_reactions=num_reactions,
+                )
+                uncached_gpu_result = self._run_single_benchmark(
+                    session=session,
+                    api_base_url=api_base_url,
+                    method_key=method_key,
+                    input_df=df_gpu,
+                    handle_long_sequences=handle_long_sequences,
+                    poll_seconds=poll_seconds,
+                    timeout_seconds=timeout_seconds,
+                    request_timeout_seconds=request_timeout_seconds,
+                    require_gpu=True,
+                )
 
             method_result = MethodBenchmarkResult(
                 method_key=method_key,
-                uncached=uncached_result,
+                uncached_cpu=uncached_cpu_result,
+                uncached_gpu=uncached_gpu_result,
                 cached=cached_result,
             )
             results.append(method_result)
 
-            self.stdout.write(self._format_method_summary(method_result))
+            self.stdout.write(self._format_method_summary(method_result, gpu_only=gpu_only))
             self.stdout.write("")
 
         self.stdout.write("Final summary")
         self.stdout.write("-" * 72)
         for result in results:
-            self.stdout.write(self._format_method_summary(result))
+            self.stdout.write(self._format_method_summary(result, gpu_only=gpu_only))
 
-        success_count = sum(
-            1
-            for r in results
-            if r.uncached.status == "Completed" and r.cached.status == "Completed"
-        )
+        if gpu_only:
+            success_count = sum(
+                1 for r in results if r.uncached_gpu.status == "Completed"
+            )
+        else:
+            success_count = sum(
+                1
+                for r in results
+                if r.uncached_cpu.status == "Completed"
+                and r.cached.status == "Completed"
+                and r.uncached_gpu.status in {"Completed", "Skipped"}
+            )
         self.stdout.write("-" * 72)
         self.stdout.write(f"Completed successfully for {success_count}/{len(results)} method(s).")
 
@@ -468,6 +535,18 @@ class Command(BaseCommand):
             )
         return pd.DataFrame(rows)
 
+    def _skipped_run(self, reason: str) -> SingleRunResult:
+        return SingleRunResult(
+            compute_seconds=None,
+            status="Skipped",
+            error_message=reason,
+            public_id="",
+            gpu_used=None,
+            gpu_attempted=None,
+            gpu_completed=None,
+            gpu_reason=None,
+        )
+
     def _run_single_benchmark(
         self,
         *,
@@ -479,6 +558,7 @@ class Command(BaseCommand):
         poll_seconds: float,
         timeout_seconds: int,
         request_timeout_seconds: float,
+        require_gpu: bool,
     ) -> SingleRunResult:
         payload = {
             "targets": ["kcat"],
@@ -503,6 +583,10 @@ class Command(BaseCommand):
                 status="Failed",
                 error_message=f"Submit request failed: {exc}",
                 public_id="",
+                gpu_used=None,
+                gpu_attempted=None,
+                gpu_completed=None,
+                gpu_reason=None,
             )
 
         if response.status_code >= 400:
@@ -514,6 +598,10 @@ class Command(BaseCommand):
                     f"{self._extract_error_message(response)}"
                 ),
                 public_id="",
+                gpu_used=None,
+                gpu_attempted=None,
+                gpu_completed=None,
+                gpu_reason=None,
             )
 
         try:
@@ -524,6 +612,10 @@ class Command(BaseCommand):
                 status="Failed",
                 error_message="Submit response was not valid JSON.",
                 public_id="",
+                gpu_used=None,
+                gpu_attempted=None,
+                gpu_completed=None,
+                gpu_reason=None,
             )
 
         public_id = str(submit_data.get("jobId", "")).strip()
@@ -533,6 +625,10 @@ class Command(BaseCommand):
                 status="Failed",
                 error_message="Submit response did not include jobId.",
                 public_id="",
+                gpu_used=None,
+                gpu_attempted=None,
+                gpu_completed=None,
+                gpu_reason=None,
             )
 
         return self._poll_job_until_terminal(
@@ -542,6 +638,7 @@ class Command(BaseCommand):
             poll_seconds=poll_seconds,
             timeout_seconds=timeout_seconds,
             request_timeout_seconds=request_timeout_seconds,
+            require_gpu=require_gpu,
         )
 
     def _poll_job_until_terminal(
@@ -553,6 +650,7 @@ class Command(BaseCommand):
         poll_seconds: float,
         timeout_seconds: int,
         request_timeout_seconds: float,
+        require_gpu: bool,
     ) -> SingleRunResult:
         deadline = time.monotonic() + timeout_seconds
         status_url = f"{api_base_url}/status/{public_id}/"
@@ -571,6 +669,10 @@ class Command(BaseCommand):
                         f"Timed out after {timeout_seconds}s waiting for job {public_id}. {detail}"
                     ),
                     public_id=public_id,
+                    gpu_used=None,
+                    gpu_attempted=None,
+                    gpu_completed=None,
+                    gpu_reason=None,
                 )
 
             try:
@@ -592,6 +694,10 @@ class Command(BaseCommand):
                         f"{self._extract_error_message(response)}"
                     ),
                     public_id=public_id,
+                    gpu_used=None,
+                    gpu_attempted=None,
+                    gpu_completed=None,
+                    gpu_reason=None,
                 )
 
             try:
@@ -602,20 +708,70 @@ class Command(BaseCommand):
                     status="Failed",
                     error_message=f"Status response for job {public_id} was not valid JSON.",
                     public_id=public_id,
+                    gpu_used=None,
+                    gpu_attempted=None,
+                    gpu_completed=None,
+                    gpu_reason=None,
                 )
 
             status = str(status_data.get("status", "Unknown")).strip()
             last_status = status or "Unknown"
             compute_seconds = self._to_optional_float(status_data.get("computeSeconds"))
             error_message = str(status_data.get("error", "")).strip()
+            gpu_info = status_data.get("gpuPrecompute")
+            gpu_used = None
+            gpu_attempted = None
+            gpu_completed = None
+            gpu_reason = None
+            if isinstance(gpu_info, dict):
+                gpu_used = bool(gpu_info.get("usedGpu", gpu_info.get("used_gpu", False)))
+                gpu_attempted = bool(gpu_info.get("attempted", False))
+                gpu_completed = bool(gpu_info.get("completed", False))
+                gpu_reason = str(gpu_info.get("reason", "")).strip() or None
 
             if status in {"Completed", "Failed"}:
-                return SingleRunResult(
+                result = SingleRunResult(
                     compute_seconds=compute_seconds,
                     status=status,
                     error_message=error_message,
                     public_id=public_id,
+                    gpu_used=gpu_used,
+                    gpu_attempted=gpu_attempted,
+                    gpu_completed=gpu_completed,
+                    gpu_reason=gpu_reason,
                 )
+                if require_gpu and status == "Completed":
+                    if gpu_used is not True:
+                        return SingleRunResult(
+                            compute_seconds=compute_seconds,
+                            status="Failed",
+                            error_message=(
+                                "GPU run completed but did not report usedGpu=true "
+                                f"(gpu_reason={gpu_reason!r})."
+                            ),
+                            public_id=public_id,
+                            gpu_used=gpu_used,
+                            gpu_attempted=gpu_attempted,
+                            gpu_completed=gpu_completed,
+                            gpu_reason=gpu_reason,
+                        )
+                    if gpu_completed is not True:
+                        return SingleRunResult(
+                            compute_seconds=compute_seconds,
+                            status="Failed",
+                            error_message=(
+                                "GPU run completed but gpuPrecompute.completed was not true "
+                                f"(gpu_reason={gpu_reason!r})."
+                            ),
+                            public_id=public_id,
+                            gpu_used=gpu_used,
+                            gpu_attempted=gpu_attempted,
+                            gpu_completed=gpu_completed,
+                            gpu_reason=gpu_reason,
+                        )
+                if require_gpu and status == "Failed" and not error_message:
+                    result.error_message = "Prediction failed during required GPU run."
+                return result
 
             time.sleep(poll_seconds)
 
@@ -678,30 +834,45 @@ class Command(BaseCommand):
         except (TypeError, ValueError):
             return None
 
-    def _format_method_summary(self, result: MethodBenchmarkResult) -> str:
-        uncached = result.uncached
+    def _format_method_summary(self, result: MethodBenchmarkResult, *, gpu_only: bool) -> str:
+        uncached_cpu = result.uncached_cpu
+        uncached_gpu = result.uncached_gpu
         cached = result.cached
 
-        uncached_time = self._format_compute_seconds(uncached.compute_seconds)
+        uncached_cpu_time = self._format_compute_seconds(uncached_cpu.compute_seconds)
+        uncached_gpu_time = self._format_compute_seconds(uncached_gpu.compute_seconds)
         cached_time = self._format_compute_seconds(cached.compute_seconds)
-        base = (
-            f"{result.method_key} - "
-            f"{uncached_time} compute (not cached), "
-            f"{cached_time} compute (cached)"
-        )
 
-        if uncached.status == "Completed" and cached.status == "Completed":
-            return base
+        if gpu_only:
+            base = (
+                f"{result.method_key} - "
+                f"{uncached_gpu_time} compute (not cached gpu)"
+            )
+        else:
+            base = (
+                f"{result.method_key} - "
+                f"{uncached_cpu_time} compute (not cached cpu), "
+                f"{uncached_gpu_time} compute (not cached gpu), "
+                f"{cached_time} compute (cached)"
+            )
 
         details: list[str] = []
-        if uncached.status != "Completed":
-            msg = uncached.error_message or "Unknown failure"
-            details.append(f"uncached failed: {msg}")
-        if cached.status != "Completed":
+        if not gpu_only and uncached_cpu.status not in {"Completed", "Skipped"}:
+            msg = uncached_cpu.error_message or "Unknown failure"
+            details.append(f"uncached cpu failed: {msg}")
+        if not gpu_only and cached.status not in {"Completed", "Skipped"}:
             msg = cached.error_message or "Unknown failure"
             details.append(f"cached failed: {msg}")
 
-        return base + " | " + " | ".join(details)
+        if uncached_gpu.status == "Skipped":
+            details.append(f"uncached gpu skipped: {uncached_gpu.error_message}")
+        elif uncached_gpu.status != "Completed":
+            msg = uncached_gpu.error_message or "Unknown failure"
+            details.append(f"uncached gpu failed: {msg}")
+
+        if details:
+            return base + " | " + " | ".join(details)
+        return base
 
     def _format_compute_seconds(self, seconds: float | None) -> str:
         if seconds is None:

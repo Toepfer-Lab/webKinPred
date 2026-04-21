@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import io
 import json
 import math
@@ -215,6 +216,41 @@ def choose_submit_csv(
         if km_method == "CatPred":
             return CATPRED_DOTJOIN_SUBSTRATE_CSV
     return SINGLE_SUBSTRATE_CSV
+
+
+def _unique_protein_sequence(seed: str, length: int = 240) -> str:
+    """
+    Build a deterministic amino-acid sequence from a seed string.
+    """
+    alphabet = "ACDEFGHIKLMNPQRSTVWY"
+    state = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    out: list[str] = []
+    idx = 0
+    while len(out) < length:
+        state = hashlib.sha256(f"{state}:{idx}".encode("utf-8")).hexdigest()
+        idx += 1
+        for ch in state:
+            out.append(alphabet[int(ch, 16) % len(alphabet)])
+            if len(out) >= length:
+                break
+    return "".join(out)
+
+
+def build_gpu_uncached_csv(label: str) -> str:
+    """
+    Build a small CSV fixture with unique proteins so GPU tests exercise
+    uncached embedding work.
+    """
+    nonce = f"{label}:{time.time_ns()}"
+    seq_a = _unique_protein_sequence(f"{nonce}:a")
+    seq_b = _unique_protein_sequence(f"{nonce}:b")
+    return textwrap.dedent(
+        f"""\
+        Protein Sequence,Substrate,Substrates,Products
+        {seq_a},CC(=O)O,CC(=O)O;O,CC(O)=O;[H+]
+        {seq_b},C1CCCCC1,C1CCCCC1;O,OC1CCCCC1;[H+]
+    """
+    )
 
 
 def expected_kcat_similarity_columns(submitted: dict) -> tuple[str, str] | None:
@@ -725,6 +761,16 @@ def wait_for_terminal_status(
     return None
 
 
+def fetch_job_status(base: str, headers: dict, job_id: str, label: str) -> dict | None:
+    """
+    Fetch the latest /status payload for a job and validate HTTP status.
+    """
+    r = requests.get(f"{base}/status/{job_id}/", headers=headers)
+    if not check(f"[{label}] status fetch HTTP 200", r.status_code == 200, f"got {r.status_code}"):
+        return None
+    return r.json()
+
+
 def validate_completed_result(
     base: str,
     headers: dict,
@@ -1002,7 +1048,7 @@ def test_gpu_methods(base: str, headers: dict, methods: set, poll_timeout: int) 
     and verify they complete successfully, confirming the GPU pipeline is working.
     Skipped gracefully when GPU is offline or not configured.
     """
-    section("GPU Pipeline — submit GPU-capable methods and verify completion")
+    section("GPU Pipeline — submit uncached GPU-capable methods and verify GPU execution")
 
     r = requests.get(f"{base}/gpu/status/")
     if r.status_code != 200:
@@ -1027,7 +1073,7 @@ def test_gpu_methods(base: str, headers: dict, methods: set, poll_timeout: int) 
             "kcat_method": m,
             "km_method": None,
             "kcat_km_method": None,
-            "csv_content": choose_submit_csv("kcat", kcat_method=m),
+            "csv_content": build_gpu_uncached_csv(f"gpu/kcat/{m}"),
             "label": f"gpu/kcat/{m}",
         })
     for m in GPU_SUPPORTED_KM_METHOD_IDS:
@@ -1038,7 +1084,7 @@ def test_gpu_methods(base: str, headers: dict, methods: set, poll_timeout: int) 
             "kcat_method": None,
             "km_method": m,
             "kcat_km_method": None,
-            "csv_content": choose_submit_csv("Km", km_method=m),
+            "csv_content": build_gpu_uncached_csv(f"gpu/Km/{m}"),
             "label": f"gpu/Km/{m}",
         })
     for m in GPU_SUPPORTED_KCAT_KM_METHOD_IDS:
@@ -1049,7 +1095,7 @@ def test_gpu_methods(base: str, headers: dict, methods: set, poll_timeout: int) 
             "kcat_method": None,
             "km_method": None,
             "kcat_km_method": m,
-            "csv_content": SINGLE_SUBSTRATE_CSV,
+            "csv_content": build_gpu_uncached_csv(f"gpu/kcat_Km/{m}"),
             "label": f"gpu/kcat_Km/{m}",
         })
 
@@ -1088,6 +1134,29 @@ def test_gpu_methods(base: str, headers: dict, methods: set, poll_timeout: int) 
             f"got {final_status}",
         )
         if final_status == "Completed":
+            status_payload = fetch_job_status(base, headers, job_id, label)
+            if status_payload is not None:
+                gpu_precompute = status_payload.get("gpuPrecompute")
+                check(
+                    f"[{label}] status exposes gpuPrecompute",
+                    isinstance(gpu_precompute, dict),
+                )
+                if isinstance(gpu_precompute, dict):
+                    used_gpu = bool(
+                        gpu_precompute.get("usedGpu", gpu_precompute.get("used_gpu", False))
+                    )
+                    check(f"[{label}] gpuPrecompute.attempted=true", bool(gpu_precompute.get("attempted")))
+                    check(f"[{label}] gpuPrecompute.usedGpu=true", used_gpu)
+                    check(f"[{label}] gpuPrecompute.completed=true", bool(gpu_precompute.get("completed")))
+                    check(
+                        f"[{label}] gpuPrecompute.failed=false",
+                        not bool(gpu_precompute.get("failed")),
+                    )
+                    check(
+                        f"[{label}] gpuPrecompute.reason=done (uncached GPU work executed)",
+                        str(gpu_precompute.get("reason", "")).strip() == "done",
+                        f"got {gpu_precompute.get('reason')!r}",
+                    )
             validate_completed_result(base, headers, job_id, label, submitted)
 
 

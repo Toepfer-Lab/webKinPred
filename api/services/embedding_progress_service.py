@@ -251,17 +251,16 @@ def _prepare_plan(
 
     for seq_id, paths in expected.items():
         missing = {p for p in paths if not Path(p).exists()}
-        if not missing:
-            cached_already += 1
-            continue
+        cached_already += len(paths) - len(missing)
+        need_computation += len(missing)
 
-        need_computation += 1
-        missing_paths_by_seq[seq_id] = missing
-        for path_str in missing:
-            path_to_seqs.setdefault(path_str, set()).add(seq_id)
-            watch_dirs.add(Path(path_str).parent)
+        if missing:
+            missing_paths_by_seq[seq_id] = missing
+            for path_str in missing:
+                path_to_seqs.setdefault(path_str, set()).add(seq_id)
+                watch_dirs.add(Path(path_str).parent)
 
-    total = len(expected)
+    total = sum(len(paths) for paths in expected.values())
 
     return _PreparedPlan(
         method_key=method_key,
@@ -395,11 +394,11 @@ class _EmbeddingTracker:
             if not missing or path_str not in missing:
                 continue
             missing.remove(path_str)
+            self.computed += 1
+            self.remaining = max(0, self.remaining - 1)
+            progressed = True
             if not missing:
                 del self._missing_paths_by_seq[seq_id]
-                self.computed += 1
-                self.remaining = max(0, self.remaining - 1)
-                progressed = True
 
         if self.remaining == 0:
             self.state = "done"

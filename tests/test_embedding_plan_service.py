@@ -64,9 +64,12 @@ class EmbeddingPlanServiceTests(unittest.TestCase):
 
             self.assertEqual(plan.profile, "kinform_full")
             self.assertTrue(plan.gpu_supported)
-            self.assertEqual(plan.total, 3)
-            self.assertEqual(plan.cached_already, 1)
-            self.assertEqual(plan.need_computation, 2)
+            # Counts are per-embedding-file, not per-sequence.
+            # sid_1: 12/12 present; sid_2: 8/12 present (4 esm2 missing);
+            # sid_3: 8/12 present (4 prot_t5 missing).
+            self.assertEqual(plan.total, 36)
+            self.assertEqual(plan.cached_already, 28)
+            self.assertEqual(plan.need_computation, 8)
 
             step_keys = [s.step_key for s in plan.step_plans]
             self.assertNotIn("kinform_pseq2sites", step_keys)

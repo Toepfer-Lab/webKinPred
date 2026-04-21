@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from api.services.embedding_plan_service import build_embedding_plan, gpu_step_work
 from api.services.embedding_progress_service import start_embedding_tracking
+from api.services.gpu_precompute_status_service import record_gpu_precompute_result
 
 
 _DEFAULT_HEALTH_TTL = 10
@@ -155,7 +156,24 @@ def run_gpu_precompute_if_available(
 ) -> GpuPrecomputeResult:
     fail_closed = _env_bool("GPU_EMBED_FAIL_CLOSED", default=False)
 
+    def _record(result: GpuPrecomputeResult) -> None:
+        try:
+            record_gpu_precompute_result(
+                job_public_id=job_public_id,
+                method_key=method_key,
+                target=target,
+                attempted=result.attempted,
+                used_gpu=result.used_gpu,
+                completed=result.completed,
+                failed=result.failed,
+                reason=result.reason,
+            )
+        except Exception:
+            # Telemetry is best-effort; never break prediction flow/tests.
+            pass
+
     def _finish(result: GpuPrecomputeResult) -> GpuPrecomputeResult:
+        _record(result)
         if fail_closed and not result.completed:
             raise RuntimeError(
                 f"GPU precompute required but incomplete for {method_key}/{target}: "
@@ -181,7 +199,11 @@ def run_gpu_precompute_if_available(
         return _finish(GpuPrecomputeResult(False, False, True, False, "cache_complete"))
     if not plan.gpu_supported:
         # Keep unsupported methods fail-open even in strict mode.
-        return GpuPrecomputeResult(False, False, False, False, plan.gpu_reason or "unsupported")
+        unsupported = GpuPrecomputeResult(
+            False, False, False, False, plan.gpu_reason or "unsupported"
+        )
+        _record(unsupported)
+        return unsupported
 
     base = _base_url()
     if not base:
