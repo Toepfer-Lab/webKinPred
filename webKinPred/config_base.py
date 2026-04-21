@@ -20,6 +20,7 @@ _DATA_PATH_REL = {
     "UniKP": "models/UniKP-main",
     "CataPro": "models/CataPro",
     "KinForm": "models/KinForm/results",
+    "MMISA-KM": "models/MMISA-KM",
     "media": "media",
     "tools": "tools",
 }
@@ -33,6 +34,7 @@ _PREDICTION_SCRIPT_REL = {
     "UniKP": "models/UniKP-main/run_unikp_batch.py",
     "CataPro": "models/CataPro/inference/custom_predict.py",
     "KinForm": "models/KinForm/code/main.py",
+    "MMISA-KM": "models/MMISA-KM/upstream/script/prediction_script.py",
 }
 
 

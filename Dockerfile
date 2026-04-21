@@ -115,6 +115,15 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     && mamba install -n catpred_env -c conda-forge rdkit=2024.03.6 -y \
     && conda run -n catpred_env pip install -r docker-requirements/catpred_requirements.txt
 
+# ── MMISA-KM ──────────────────────────────────────────────────────────────────
+FROM base AS env-mmisakm
+COPY docker-requirements/mmisakm_requirements.txt ./docker-requirements/
+RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
+    --mount=type=cache,id=webkinpred-pip-py39,target=/root/.cache/pip,sharing=locked \
+    mamba create -n mmisakm_env python=3.9 -c conda-forge -y \
+    && mamba install -n mmisakm_env -c conda-forge rdkit=2022.9.5 -y \
+    && conda run -n mmisakm_env pip install -r docker-requirements/mmisakm_requirements.txt
+
 # ── pseq2sites ────────────────────────────────────────────────────────────────
 FROM base AS env-pseq2sites
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
@@ -165,6 +174,7 @@ COPY --from=env-turnup    /opt/conda/envs/turnup_env   /opt/conda/envs/turnup_en
 COPY --from=env-unikp     /opt/conda/envs/unikp        /opt/conda/envs/unikp
 COPY --from=env-catapro   /opt/conda/envs/catapro_env  /opt/conda/envs/catapro_env
 COPY --from=env-catpred   /opt/conda/envs/catpred_env  /opt/conda/envs/catpred_env
+COPY --from=env-mmisakm   /opt/conda/envs/mmisakm_env  /opt/conda/envs/mmisakm_env
 COPY --from=env-pseq2sites /opt/conda/envs/pseq2sites  /opt/conda/envs/pseq2sites
 COPY --from=env-esm       /opt/conda/envs/esm          /opt/conda/envs/esm
 COPY --from=env-esmc      /opt/conda/envs/esmc         /opt/conda/envs/esmc

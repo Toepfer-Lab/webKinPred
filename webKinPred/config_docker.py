@@ -22,6 +22,7 @@ PYTHON_PATHS = {
     "UniKP": "/opt/conda/envs/unikp/bin/python",
     "CataPro": "/opt/conda/envs/catapro_env/bin/python",
     "KinForm": "/opt/conda/envs/kinform_env/bin/python",
+    "MMISA-KM": "/opt/conda/envs/mmisakm_env/bin/python",
     "esm2": "/opt/conda/envs/esm/bin/python",
     "esmc": "/opt/conda/envs/esmc/bin/python",
     "t5": "/opt/conda/envs/prot_t5/bin/python",
