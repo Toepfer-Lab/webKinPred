@@ -46,6 +46,8 @@ import torch
 
 from catpred.utils import load_checkpoint
 
+_POOL_BATCH = 50  # sequences processed per sub-batch inside each loaded checkpoint model
+
 
 # ── Checkpoint discovery ──────────────────────────────────────────────────────
 
@@ -144,12 +146,6 @@ def _compute_seq_pooled_output(
 # ── ESM2 representations ──────────────────────────────────────────────────────
 
 def _get_esm_repr(sequence: str) -> torch.Tensor:
-    """Return the ESM2 per-residue representation for *sequence*.
-
-    Delegates to catpred.data.esm_utils.get_single_esm_repr, which respects
-    the PROTEIN_EMBED_USE_CPU env-var.  On the GPU server that variable must
-    NOT be set (or must be empty) so ESM2 runs on GPU.
-    """
     from catpred.data.esm_utils import get_single_esm_repr
     return get_single_esm_repr(sequence).cpu()
 
@@ -246,20 +242,23 @@ def main() -> None:
         model = load_checkpoint(str(checkpoint_path), device=device)
         model.eval()
 
-        with torch.no_grad():
-            for seq_id in pending:
-                output_path = _cache_path(cache_root, parameter, model_key, seq_id)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                pooled = _compute_seq_pooled_output(
-                    model=model,
-                    sequence=seq_id_to_seq[seq_id],
-                    seq_id=seq_id,
-                    esm_feature=esm_by_seq_id[seq_id],
-                    device=device,
-                )
-                torch.save(pooled, output_path)
+        for batch_start in range(0, len(pending), _POOL_BATCH):
+            batch = pending[batch_start : batch_start + _POOL_BATCH]
+            with torch.no_grad():
+                for seq_id in batch:
+                    output_path = _cache_path(cache_root, parameter, model_key, seq_id)
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    pooled = _compute_seq_pooled_output(
+                        model=model,
+                        sequence=seq_id_to_seq[seq_id],
+                        seq_id=seq_id,
+                        esm_feature=esm_by_seq_id[seq_id],
+                        device=device,
+                    )
+                    torch.save(pooled, output_path)
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
 
-        # Free model memory before loading the next checkpoint.
         del model
         if device.type == "cuda":
             torch.cuda.empty_cache()
