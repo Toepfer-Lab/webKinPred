@@ -1,6 +1,6 @@
 // App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import JobSubmissionForm from './components/job-submission/JobSubmissionForm';
 import JobStatus from './components/JobStatus';
 import About from './components/About';
@@ -13,13 +13,16 @@ import ProteinBackground from './components/ProteinBackground';
 import Footer from './components/Footer';
 import './styles/App.css';
 
-function App() {
+function AppContent() {
+  const location = useLocation();
+  const showGpuStatus = location.pathname === '/' || location.pathname.startsWith('/track-job');
+
   return (
-    <Router>
+    <>
       <ProteinBackground />
       <div className="app-container">
         <Header />
-        <GpuStatus />
+        {showGpuStatus && <GpuStatus />}
         <main className="main-content">
           <Routes>
             <Route path="/" element={<JobSubmissionForm />} />
@@ -34,6 +37,14 @@ function App() {
         </main>
         <Footer />
       </div>
+    </>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <AppContent />
     </Router>
   );
 }

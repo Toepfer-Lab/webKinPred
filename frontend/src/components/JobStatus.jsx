@@ -46,6 +46,7 @@ function JobStatus() {
   const [queuePosition, setQueuePosition] = useState(null);
   const [isCopying, setIsCopying] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [progressStages, setProgressStages] = useState([]);
 
   // Persist progress so x/y never drops to 0/0 when the job completes
   const [metrics, setMetrics] = useState({
@@ -110,6 +111,8 @@ function JobStatus() {
 
         setJobStatus(data);
         setError(null);
+
+        setProgressStages(Array.isArray(data.progress_stages) ? data.progress_stages : []);
 
         setMetrics((prev) => {
           const embedding = data.embedding_progress;
@@ -176,6 +179,7 @@ function JobStatus() {
     setQueueTime('');
     setComputeTime('');
     setQueuePosition(null);
+    setProgressStages([]);
     // Reset sticky metrics for a new job
     setMetrics({
       moleculesProcessed: 0,
@@ -259,24 +263,48 @@ function JobStatus() {
     return { variant: 'secondary', icon: <HourglassSplit className="me-1" />, label: '—' };
   }, [jobStatus]);
 
-  // Percentages based on sticky metrics
-  const moleculesPct = useMemo(() => {
-    const done = metrics.moleculesProcessed || 0;
-    const total = metrics.totalMolecules || 0;
-    return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  }, [metrics]);
-
-  const predsPct = useMemo(() => {
-    const made = metrics.predictionsMade || 0;
-    const total = metrics.totalPredictions || 0;
-    return total > 0 ? Math.min(100, Math.round((made / total) * 100)) : 0;
-  }, [metrics]);
-
-  const embeddingPct = useMemo(() => {
-    const done = metrics.embeddingComputed || 0;
-    const total = metrics.embeddingNeedComputation || 0;
-    return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  }, [metrics]);
+  const normalizedStages = useMemo(() => {
+    if (Array.isArray(progressStages) && progressStages.length > 0) {
+      return progressStages;
+    }
+    if (!jobStatus) return [];
+    if (jobStatus.status === 'Pending') return [];
+    const stageStatus =
+      jobStatus.status === 'Completed' ? 'completed' :
+      jobStatus.status === 'Failed' ? 'failed' :
+      jobStatus.status === 'Processing' ? 'running' :
+      'pending';
+    return [
+      {
+        index: 0,
+        target: 'Prediction',
+        method_name: '',
+        method_key: '',
+        status: stageStatus,
+        prediction: {
+          molecules_total: metrics.totalMolecules || 0,
+          molecules_processed: metrics.moleculesProcessed || 0,
+          invalid_rows: metrics.invalidRows || 0,
+          predictions_total: metrics.totalPredictions || 0,
+          predictions_made: metrics.predictionsMade || 0,
+        },
+        embedding: metrics.embeddingEnabled
+          ? {
+              enabled: true,
+              state: metrics.embeddingState || 'running',
+              total: metrics.embeddingTotal || 0,
+              cached_already: metrics.embeddingCachedAlready || 0,
+              need_computation: metrics.embeddingNeedComputation || 0,
+              computed: metrics.embeddingComputed || 0,
+              remaining: metrics.embeddingRemaining || 0,
+            }
+          : {
+              enabled: false,
+              state: 'not_required',
+            },
+      },
+    ];
+  }, [progressStages, jobStatus, metrics]);
 
   // Build a nice expandable block for rows we couldn't predict (if the API returns any flavour of this)
   const skippedRowsMessage = useMemo(() => {
@@ -438,120 +466,112 @@ function JobStatus() {
                   {/* ── RESULTS ────────────────────────────────────────── */}
                   <div className="stat-section">
                     <div className="stat-section-title">Results</div>
-                    <Row className="g-3">
-                      <Col xs={12} sm={4}>
-                        <div className="stat-card">
-                          <div className="stat-label">Preprocessed</div>
-                          <div className="stat-value">
-                            {metrics.moleculesProcessed}
-                            <span className="stat-sub"> / {metrics.totalMolecules}</span>
+                    {normalizedStages.length === 0 && (
+                      <div className="stat-hint">
+                        Target progress will appear once processing begins.
+                      </div>
+                    )}
+                    {normalizedStages.map((stage) => {
+                      const pred = stage.prediction || {};
+                      const made = Number(pred.predictions_made ?? pred.predictionsMade ?? 0);
+                      const total = Number(pred.predictions_total ?? pred.predictionsTotal ?? 0);
+                      const processed = Number(pred.molecules_processed ?? pred.moleculesProcessed ?? 0);
+                      const moleculesTotal = Number(pred.molecules_total ?? pred.moleculesTotal ?? 0);
+                      const invalid = Number(pred.invalid_rows ?? pred.invalidRows ?? 0);
+                      const pct = total > 0 ? Math.min(100, Math.round((made / total) * 100)) : 0;
+                      const stageStatus = String(stage.status || 'pending').toLowerCase();
+                      const badgeVariant =
+                        stageStatus === 'completed' ? 'success'
+                        : stageStatus === 'running' ? 'info'
+                        : stageStatus === 'failed' ? 'danger'
+                        : 'secondary';
+
+                      return (
+                        <div className="progress-item" key={`${stage.index}-${stage.target}-${stage.method_key || ''}`}>
+                          <div className="progress-row">
+                            <div className="progress-title">
+                              <GraphUp className="me-2" />
+                              {stage.target}
+                              {(stage.method_name || stage.methodName) ? ` - ${stage.method_name || stage.methodName}` : ''}
+                            </div>
+                            <div className="progress-count">
+                              <Badge bg={badgeVariant}>{stageStatus}</Badge>
+                            </div>
                           </div>
-                          <div className="stat-hint">Reactions validated and prepared for prediction</div>
-                        </div>
-                      </Col>
-                      <Col xs={12} sm={4}>
-                        <div className="stat-card">
-                          <div className="stat-label"><GraphUp className="me-2" />Predictions</div>
-                          <div className="stat-value">
-                            {metrics.predictionsMade}
-                            <span className="stat-sub"> / {metrics.totalPredictions}</span>
+                          <div className="progress-row">
+                            <div className="progress-count">
+                              Predictions: {made} / {total}
+                            </div>
+                            <div className="progress-count">
+                              Validated: {processed} / {moleculesTotal}
+                            </div>
                           </div>
-                          <div className="stat-hint">Kinetic parameters predicted so far</div>
-                        </div>
-                      </Col>
-                      <Col xs={12} sm={4}>
-                        <div className={`stat-card${metrics.invalidRows > 0 ? ' stat-card-warn' : ''}`}>
-                          <div className="stat-label">
-                            {metrics.invalidRows > 0 && <ExclamationTriangle className="me-2" />}
-                            Invalid Rows
-                          </div>
-                          <div className="stat-value">{metrics.invalidRows}</div>
+                          <ProgressBar now={pct} className="kave-progress" />
                           <div className="stat-hint">
-                            {metrics.invalidRows > 0
-                              ? 'Rows skipped — unrecognised format, missing fields, or unsupported sequences'
-                              : 'All input rows passed validation'}
+                            Invalid Rows: {invalid}
                           </div>
                         </div>
-                      </Col>
-                    </Row>
+                      );
+                    })}
                   </div>
 
                   {/* ── PROTEIN EMBEDDINGS ─────────────────────────────── */}
-                  {metrics.embeddingEnabled && (
-                    <div className="stat-section">
-                      <div className="stat-section-title">
-                        <Database className="me-2" />Protein Embeddings
-                      </div>
-                      <p className="stat-section-desc">
-                        PLM embeddings encode your protein sequences for prediction. Each embedding is computed once and stored.
-                      </p>
-                      <Row className="g-3">
-                        <Col xs={12} sm={4}>
-                          <div className="stat-card stat-card-cached">
-                            <div className="stat-label"><CheckCircleFill className="me-2" />Cached</div>
-                            <div className="stat-value">{metrics.embeddingCachedAlready}</div>
-                            <div className="stat-hint">Found in cache — no computation needed</div>
-                          </div>
-                        </Col>
-                        <Col xs={12} sm={4}>
-                          <div className="stat-card">
-                            <div className="stat-label"><Cpu className="me-2" />Need Computation</div>
-                            <div className="stat-value">{metrics.embeddingNeedComputation}</div>
-                            <div className="stat-hint">New sequences requiring fresh embedding generation</div>
-                          </div>
-                        </Col>
-                        <Col xs={12} sm={4}>
-                          <div className="stat-card">
-                            <div className="stat-label">Computed</div>
-                            <div className="stat-value">
-                              {metrics.embeddingComputed}
-                              <span className="stat-sub"> / {metrics.embeddingNeedComputation}</span>
-                            </div>
-                            <div className="stat-hint">Newly generated embeddings this job</div>
-                          </div>
-                        </Col>
-                      </Row>
+                  <div className="stat-section">
+                    <div className="stat-section-title">
+                      <Database className="me-2" />Protein Embeddings
                     </div>
-                  )}
+                    <p className="stat-section-desc">
+                      Embedding progress is shown per target and method. Completed stages stay visible while the next target starts.
+                    </p>
+                    {normalizedStages.length === 0 && (
+                      <div className="stat-hint">
+                        Embedding details will appear once the active target starts prediction.
+                      </div>
+                    )}
+                    {normalizedStages.map((stage) => {
+                      const emb = stage.embedding || {};
+                      const state = String(emb.state || (emb.enabled ? 'pending' : 'not_required')).toLowerCase();
+                      const enabled = Boolean(emb.enabled);
+                      const cached = Number(emb.cached_already ?? emb.cachedAlready ?? 0);
+                      const need = Number(emb.need_computation ?? emb.needComputation ?? 0);
+                      const computed = Number(emb.computed ?? 0);
+                      const pct = need > 0 ? Math.min(100, Math.round((computed / need) * 100)) : 0;
+                      const badgeVariant =
+                        state === 'done' ? 'success'
+                        : state === 'running' ? 'info'
+                        : state === 'error' ? 'danger'
+                        : state === 'not_required' ? 'secondary'
+                        : 'secondary';
 
-                  {/* ── LIVE PROGRESS (Processing only) ────────────────── */}
-                  {jobStatus.status === 'Processing' && (
-                    <div className="stat-section">
-                      <div className="stat-section-title">Live Progress</div>
-                      {metrics.embeddingEnabled && metrics.embeddingNeedComputation > 0 && (
-                        <div className="progress-item">
+                      return (
+                        <div className="progress-item" key={`emb-${stage.index}-${stage.target}-${stage.method_key || ''}`}>
                           <div className="progress-row">
-                            <div className="progress-title">Embeddings Computed</div>
+                            <div className="progress-title">
+                              <CheckCircleFill className="me-2" />
+                              {stage.target}
+                              {(stage.method_name || stage.methodName) ? ` - ${stage.method_name || stage.methodName}` : ''}
+                            </div>
                             <div className="progress-count">
-                              {metrics.embeddingComputed} / {metrics.embeddingNeedComputation}
+                              <Badge bg={badgeVariant}>{state}</Badge>
                             </div>
                           </div>
-                          <ProgressBar now={embeddingPct} className="kave-progress" />
+                          {!enabled || state === 'not_required' ? (
+                            <div className="stat-hint">No embedding computation is required for this stage.</div>
+                          ) : (
+                            <>
+                              <div className="progress-row">
+                                <div className="progress-count">Cached: {cached}</div>
+                                <div className="progress-count">
+                                  Computed: {computed} / {need}
+                                </div>
+                              </div>
+                              <ProgressBar now={pct} className="kave-progress" />
+                            </>
+                          )}
                         </div>
-                      )}
-                      {metrics.totalMolecules > 0 && (
-                        <div className="progress-item">
-                          <div className="progress-row">
-                            <div className="progress-title">Reactions Processed</div>
-                            <div className="progress-count">{moleculesPct}%</div>
-                          </div>
-                          <ProgressBar now={moleculesPct} className="kave-progress" />
-                        </div>
-                      )}
-                      {metrics.totalPredictions > 0 && (
-                        <div className="progress-item">
-                          <div className="progress-row">
-                            <div className="progress-title">Predictions Made</div>
-                            <div className="progress-count">{predsPct}%</div>
-                          </div>
-                          <ProgressBar now={predsPct} className="kave-progress" />
-                        </div>
-                      )}
-                      <div className="mt-4 d-flex justify-content-center">
-                        <Spinner animation="border" role="status" />
-                      </div>
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
 
                   {/* ── COMPLETED ──────────────────────────────────────── */}
                   {jobStatus.status === 'Completed' && (
