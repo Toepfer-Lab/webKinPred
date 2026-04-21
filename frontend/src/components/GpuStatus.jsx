@@ -1,65 +1,137 @@
 import React, { useEffect, useState } from 'react';
+import { Table, Container, Row, Col } from 'react-bootstrap';
+import { ChevronDown, ChevronUp, Speedometer2 } from 'react-bootstrap-icons';
 import apiClient from './appClient';
+import '../styles/components/GpuStatus.css';
 
+const BENCHMARK_DATA = [
+  { method: 'DLKcat',    uncachedCpu: '32 s',         uncachedGpu: '', cached: 'N/A'        },
+  { method: 'CatPred',   uncachedCpu: '14 min 0 s',   uncachedGpu: '', cached: '23 s'       },
+  { method: 'EITLEM',    uncachedCpu: '18 min 13 s',  uncachedGpu: '', cached: '4 min 11 s' },
+  { method: 'TurNup',    uncachedCpu: '19 min 36 s',  uncachedGpu: '', cached: '3 min 48 s' },
+  { method: 'CataPro',   uncachedCpu: '25 min 9 s',   uncachedGpu: '', cached: '41 s'       },
+  { method: 'UniKP',     uncachedCpu: '33 min 46 s',  uncachedGpu: '', cached: '4 min 7 s'  },
+  { method: 'KinForm-L', uncachedCpu: '54 min 38 s',  uncachedGpu: '', cached: '37 s'       },
+  { method: 'KinForm-H', uncachedCpu: '56 min 10 s',  uncachedGpu: '', cached: '36 s'       },
+];
 
-export default function GpuStatus() {
+export default function GpuStatus({ layout = 'home' }) {
   const [status, setStatus] = useState(null);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-
     const fetchStatus = async () => {
       try {
         const { data } = await apiClient.get('/v1/gpu/status/');
         if (!cancelled) setStatus(data || { configured: false, online: false, mode: 'cpu' });
       } catch (_) {
-        if (!cancelled) {
-          setStatus({ configured: false, online: false, mode: 'cpu' });
-        }
+        if (!cancelled) setStatus({ configured: false, online: false, mode: 'cpu' });
       }
     };
-
     fetchStatus();
     const timer = setInterval(fetchStatus, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
+    return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
   if (!status) return null;
 
-  const schedule = 'Available daily 5 PM – 8 AM GMT · 24h on weekends';
+  const isOnline = status.configured && status.online;
+  const schedule = 'Daily 5 PM – 8 AM GMT · 24h on weekends';
 
-  if (!status.configured || !status.online) {
-    return (
-      <div className="gpu-status-bar gpu-status-bar--cpu" data-tooltip={schedule}>
-        <span className="gpu-status-bar__dot" />
-        <span className="gpu-status-bar__label">CPU Mode</span>
-        <span className="gpu-status-bar__sep">·</span>
-        <span className="gpu-status-bar__detail">GPU acceleration available</span>
-      </div>
-    );
+  let remaining = null;
+  if (isOnline) {
+    const now = new Date();
+    const cutoff = new Date(Date.UTC(
+      now.getUTCFullYear(), now.getUTCMonth(),
+      now.getUTCDate() + (now.getUTCHours() >= 8 ? 1 : 0),
+      8, 0, 0, 0
+    ));
+    const msLeft = cutoff - now;
+    const hLeft = Math.floor(msLeft / 3600000);
+    const mLeft = Math.floor((msLeft % 3600000) / 60000);
+    remaining = hLeft > 0 ? `${hLeft}h ${mLeft}m` : `${mLeft}m`;
   }
 
-  const now = new Date();
-  const cutoff = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + (now.getUTCHours() >= 8 ? 1 : 0),
-    8, 0, 0, 0
-  ));
-  const msLeft = cutoff - now;
-  const hLeft = Math.floor(msLeft / 3600000);
-  const mLeft = Math.floor((msLeft % 3600000) / 60000);
-  const remaining = hLeft > 0 ? `${hLeft}h ${mLeft}m` : `${mLeft}m`;
-
   return (
-    <div className="gpu-status-bar gpu-status-bar--online" data-tooltip={schedule}>
-      <span className="gpu-status-bar__dot" />
-      <span className="gpu-status-bar__label">GPU Available</span>
-      <span className="gpu-status-bar__sep">·</span>
-      <span className="gpu-status-bar__detail">{remaining} remaining</span>
-    </div>
+    <section className="gpu-status-shell">
+      <Container className="gpu-status-container">
+        <Row className="justify-content-center">
+          <Col md={10} lg={layout === 'track' ? 9 : undefined}>
+            <div className={`gpu-status-card ${isOnline ? 'is-online' : 'is-cpu'}`}>
+              <button
+                className="gpu-status-toggle"
+                onClick={() => setOpen(o => !o)}
+                aria-expanded={open}
+              >
+                <div className="gpu-status-summary">
+                  <div className="gpu-status-line">
+                    <span className={`gpu-status-badge ${isOnline ? 'is-online' : 'is-cpu'}`}>
+                      {isOnline ? 'GPU Available' : 'CPU Mode'}
+                    </span>
+                    <span className="gpu-status-value">
+                      {isOnline ? `${remaining} remaining` : 'GPU currently unavailable'}
+                    </span>
+                  </div>
+                  <div className="gpu-status-meta">
+                    <span className="gpu-status-meta-label">GPU Window</span>
+                    <span className="gpu-status-meta-value">{schedule}</span>
+                  </div>
+                </div>
+
+                <span className="gpu-status-benchmark">
+                  <Speedometer2 size={13} />
+                  Runtime Benchmark
+                  {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </span>
+              </button>
+
+              {open && (
+                <div className="gpu-status-panel">
+                  <p className="gpu-status-intro">
+                    PLM embeddings are cached server-side. Once a sequence is computed, it is reused across future jobs.
+                    Compute time scales mainly with unique proteins, not total rows.
+                  </p>
+                  <p className="gpu-status-conditions">
+                    Conditions:
+                    <span className="gpu-status-cond-value">1,000 reactions</span>
+                    <span className="gpu-status-cond-sep">·</span>
+                    <span className="gpu-status-cond-value">100 unique proteins</span>
+                    <span className="gpu-status-cond-sep">·</span>
+                    <span className="gpu-status-cond-value">avg. 400 aa</span>
+                  </p>
+
+                  <Table size="sm" className="benchmark-table mb-0">
+                    <thead>
+                      <tr>
+                        <th rowSpan={2}>Method</th>
+                        <th colSpan={2} className="benchmark-th-group">PLM embeddings not cached</th>
+                        <th rowSpan={2}>PLM embeddings cached</th>
+                      </tr>
+                      <tr>
+                        <th>GPU</th>
+                        <th>CPU</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {BENCHMARK_DATA.map(({ method, uncachedGpu, uncachedCpu, cached }) => (
+                        <tr key={method}>
+                          <td className="benchmark-method">{method}</td>
+                          <td className={uncachedGpu ? '' : 'benchmark-empty'}>{uncachedGpu || '—'}</td>
+                          <td>{uncachedCpu ?? '—'}</td>
+                          <td className={cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}>
+                            {cached ?? '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </Col>
+        </Row>
+      </Container>
+    </section>
   );
 }

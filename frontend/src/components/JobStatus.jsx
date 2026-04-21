@@ -24,8 +24,7 @@ import {
   Stopwatch,
   Database,
   Cpu,
-  GraphUp,
-  CheckCircleFill,
+  GraphUp
 } from 'react-bootstrap-icons';
 import moment from 'moment';
 import ExpandableErrorMessage from './ExpandableErrorMessage';
@@ -34,8 +33,9 @@ import '../styles/components/JobStatus.css';
 
 function JobStatus() {
   const { public_id: routePublicId } = useParams();
-  const [inputPublicId, setInputPublicId] = useState(routePublicId || '');
-  const [publicId, setPublicId] = useState(routePublicId || '');
+  const initialPublicId = routePublicId || readStoredTrackJobId();
+  const [inputPublicId, setInputPublicId] = useState(initialPublicId);
+  const [publicId, setPublicId] = useState(initialPublicId);
 
   const [jobStatus, setJobStatus] = useState(null);
   const [error, setError] = useState(null);
@@ -169,6 +169,27 @@ function JobStatus() {
     };
   }, []);
 
+  // Keep state in sync with route changes and restore saved ID when route has no ID.
+  useEffect(() => {
+    if (routePublicId) {
+      setInputPublicId(routePublicId);
+      setPublicId(routePublicId);
+      return;
+    }
+    const stored = readStoredTrackJobId();
+    if (stored) {
+      setInputPublicId(stored);
+      setPublicId(stored);
+    }
+  }, [routePublicId]);
+
+  // Persist the most recently checked job ID so refresh on /track-job keeps it.
+  useEffect(() => {
+    if (publicId) {
+      writeStoredTrackJobId(publicId);
+    }
+  }, [publicId]);
+
   // Kick off or restart polling only when the job ID changes
   useEffect(() => {
     clearTimer();
@@ -269,41 +290,7 @@ function JobStatus() {
     }
     if (!jobStatus) return [];
     if (jobStatus.status === 'Pending') return [];
-    const stageStatus =
-      jobStatus.status === 'Completed' ? 'completed' :
-      jobStatus.status === 'Failed' ? 'failed' :
-      jobStatus.status === 'Processing' ? 'running' :
-      'pending';
-    return [
-      {
-        index: 0,
-        target: 'Prediction',
-        method_name: '',
-        method_key: '',
-        status: stageStatus,
-        prediction: {
-          molecules_total: metrics.totalMolecules || 0,
-          molecules_processed: metrics.moleculesProcessed || 0,
-          invalid_rows: metrics.invalidRows || 0,
-          predictions_total: metrics.totalPredictions || 0,
-          predictions_made: metrics.predictionsMade || 0,
-        },
-        embedding: metrics.embeddingEnabled
-          ? {
-              enabled: true,
-              state: metrics.embeddingState || 'running',
-              total: metrics.embeddingTotal || 0,
-              cached_already: metrics.embeddingCachedAlready || 0,
-              need_computation: metrics.embeddingNeedComputation || 0,
-              computed: metrics.embeddingComputed || 0,
-              remaining: metrics.embeddingRemaining || 0,
-            }
-          : {
-              enabled: false,
-              state: 'not_required',
-            },
-      },
-    ];
+    return buildLegacyStages(jobStatus, metrics);
   }, [progressStages, jobStatus, metrics]);
 
   // Build a nice expandable block for rows we couldn't predict (if the API returns any flavour of this)
@@ -357,6 +344,56 @@ function JobStatus() {
 
     return sanitiseErrorForUser('');
   }, [jobStatus]);
+
+  const stageSummary = useMemo(() => {
+    const summary = {
+      total: normalizedStages.length,
+      completed: 0,
+      running: 0,
+      pending: 0,
+      failed: 0,
+    };
+
+    normalizedStages.forEach((stage) => {
+      const state = String(stage.status || 'pending').toLowerCase();
+      if (state === 'completed') summary.completed += 1;
+      else if (state === 'running') summary.running += 1;
+      else if (state === 'failed') summary.failed += 1;
+      else summary.pending += 1;
+    });
+
+    return summary;
+  }, [normalizedStages]);
+
+  const embeddingSummary = useMemo(() => {
+    const summary = {
+      enabled: 0,
+      done: 0,
+      running: 0,
+      pending: 0,
+      error: 0,
+      notRequired: 0,
+    };
+
+    normalizedStages.forEach((stage) => {
+      const emb = stage.embedding || {};
+      const enabled = Boolean(emb.enabled);
+      const state = String(emb.state || (enabled ? 'pending' : 'not_required')).toLowerCase();
+
+      if (!enabled || state === 'not_required') {
+        summary.notRequired += 1;
+        return;
+      }
+
+      summary.enabled += 1;
+      if (state === 'done') summary.done += 1;
+      else if (state === 'running') summary.running += 1;
+      else if (state === 'error') summary.error += 1;
+      else summary.pending += 1;
+    });
+
+    return summary;
+  }, [normalizedStages]);
 
   return (
     <Container className="mt-1 pb-5">
@@ -444,16 +481,26 @@ function JobStatus() {
 
                   {/* ── TIMING ─────────────────────────────────────────── */}
                   <div className="stat-section">
-                    <div className="stat-section-title">Timing</div>
+                    <div className="stat-section-header">
+                      <div>
+                        <div className="stat-section-title">
+                          <Stopwatch className="me-2" />
+                          Timing
+                        </div>
+                        <p className="stat-section-desc">
+                          Queue and compute duration for this job.
+                        </p>
+                      </div>
+                    </div>
                     <Row className="g-3">
-                      <Col xs={6}>
+                      <Col xs={12} sm={6}>
                         <div className="stat-card">
                           <div className="stat-label"><Stopwatch className="me-2" />Queue Time</div>
                           <div className="stat-value">{queueTime || '—'}</div>
                           <div className="stat-hint">Time spent waiting in queue before processing began</div>
                         </div>
                       </Col>
-                      <Col xs={6}>
+                      <Col xs={12} sm={6}>
                         <div className="stat-card">
                           <div className="stat-label"><Cpu className="me-2" />Compute Time</div>
                           <div className="stat-value">{computeTime || '—'}</div>
@@ -465,112 +512,222 @@ function JobStatus() {
 
                   {/* ── RESULTS ────────────────────────────────────────── */}
                   <div className="stat-section">
-                    <div className="stat-section-title">Results</div>
+                    <div className="stat-section-header">
+                      <div>
+                        <div className="stat-section-title">
+                          <GraphUp className="me-2" />
+                          Results
+                        </div>
+                      </div>
+                      {normalizedStages.length > 0 && (
+                        <div className="section-chip-row">
+                          <span className="section-chip">{stageSummary.total} targets</span>
+                          <span className="section-chip is-success">{stageSummary.completed} completed</span>
+                          {stageSummary.running > 0 && (
+                            <span className="section-chip is-info">{stageSummary.running} running</span>
+                          )}
+                          {stageSummary.pending > 0 && (
+                            <span className="section-chip">{stageSummary.pending} pending</span>
+                          )}
+                          {stageSummary.failed > 0 && (
+                            <span className="section-chip is-danger">{stageSummary.failed} failed</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     {normalizedStages.length === 0 && (
                       <div className="stat-hint">
                         Target progress will appear once processing begins.
                       </div>
                     )}
-                    {normalizedStages.map((stage) => {
-                      const pred = stage.prediction || {};
-                      const made = Number(pred.predictions_made ?? pred.predictionsMade ?? 0);
-                      const total = Number(pred.predictions_total ?? pred.predictionsTotal ?? 0);
-                      const processed = Number(pred.molecules_processed ?? pred.moleculesProcessed ?? 0);
-                      const moleculesTotal = Number(pred.molecules_total ?? pred.moleculesTotal ?? 0);
-                      const invalid = Number(pred.invalid_rows ?? pred.invalidRows ?? 0);
-                      const pct = total > 0 ? Math.min(100, Math.round((made / total) * 100)) : 0;
-                      const stageStatus = String(stage.status || 'pending').toLowerCase();
-                      const badgeVariant =
-                        stageStatus === 'completed' ? 'success'
-                        : stageStatus === 'running' ? 'info'
-                        : stageStatus === 'failed' ? 'danger'
-                        : 'secondary';
+                    {normalizedStages.length > 0 && (
+                      <div className="stage-list">
+                        {normalizedStages.map((stage, idx) => {
+                          const pred = stage.prediction || {};
+                          const made = num(pred.predictions_made ?? pred.predictionsMade ?? 0);
+                          const total = num(pred.predictions_total ?? pred.predictionsTotal ?? 0);
+                          const processed = num(pred.molecules_processed ?? pred.moleculesProcessed ?? 0);
+                          const moleculesTotal = num(pred.molecules_total ?? pred.moleculesTotal ?? 0);
+                          const invalid = num(pred.invalid_rows ?? pred.invalidRows ?? 0);
+                          const stageStatus = String(stage.status || 'pending').toLowerCase();
+                          const badgeVariant =
+                            stageStatus === 'completed' ? 'success'
+                            : stageStatus === 'running' ? 'info'
+                            : stageStatus === 'failed' ? 'danger'
+                            : 'secondary';
+                          const progressVariant =
+                            stageStatus === 'completed' ? 'success'
+                            : stageStatus === 'failed' ? 'danger'
+                            : 'info';
+                          const pct = total > 0
+                            ? Math.min(100, Math.round((made / total) * 100))
+                            : (stageStatus === 'completed' ? 100 : 0);
+                          const stageIndexValue = Number(stage.index);
+                          const stageNumber = Number.isFinite(stageIndexValue) ? stageIndexValue + 1 : idx + 1;
+                          const methodName = stage.method_name || stage.methodName || '';
 
-                      return (
-                        <div className="progress-item" key={`${stage.index}-${stage.target}-${stage.method_key || ''}`}>
-                          <div className="progress-row">
-                            <div className="progress-title">
-                              <GraphUp className="me-2" />
-                              {stage.target}
-                              {(stage.method_name || stage.methodName) ? ` - ${stage.method_name || stage.methodName}` : ''}
+                          return (
+                            <div
+                              className="stage-card"
+                              key={`${stage.index ?? idx}-${stage.target}-${stage.method_key || stage.methodKey || ''}`}
+                            >
+                              <div className="stage-card-top">
+                                <div className="stage-name-wrap">
+                                  <div className="stage-index-label">Target {stageNumber}</div>
+                                  <div className="stage-title-line">
+                                    <span className="stage-target-name">{stage.target || `Target ${stageNumber}`}</span>
+                                    {methodName && <span className="stage-method-chip">{methodName}</span>}
+                                  </div>
+                                </div>
+                                <Badge bg={badgeVariant} className="stage-status-chip">
+                                  {formatPredictionStageStatus(stageStatus)}
+                                </Badge>
+                              </div>
+
+                              <div className="stage-metrics-grid">
+                                <div className="metric-chip">
+                                  <span className="metric-chip-label">Predictions</span>
+                                  <span className="metric-chip-value">{made} / {total}</span>
+                                </div>
+                                <div className="metric-chip">
+                                  <span className="metric-chip-label">Validated Rows</span>
+                                  <span className="metric-chip-value">{processed} / {moleculesTotal}</span>
+                                </div>
+                                <div className={`metric-chip ${invalid > 0 ? 'is-warning' : ''}`}>
+                                  <span className="metric-chip-label">Invalid Rows</span>
+                                  <span className="metric-chip-value">{invalid}</span>
+                                </div>
+                              </div>
+
+                              <div className="stage-progress-row">
+                                <span>Prediction Progress</span>
+                                <span>{pct}%</span>
+                              </div>
+                              <ProgressBar now={pct} variant={progressVariant} className="kave-progress" />
                             </div>
-                            <div className="progress-count">
-                              <Badge bg={badgeVariant}>{stageStatus}</Badge>
-                            </div>
-                          </div>
-                          <div className="progress-row">
-                            <div className="progress-count">
-                              Predictions: {made} / {total}
-                            </div>
-                            <div className="progress-count">
-                              Validated: {processed} / {moleculesTotal}
-                            </div>
-                          </div>
-                          <ProgressBar now={pct} className="kave-progress" />
-                          <div className="stat-hint">
-                            Invalid Rows: {invalid}
-                          </div>
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {/* ── PROTEIN EMBEDDINGS ─────────────────────────────── */}
                   <div className="stat-section">
-                    <div className="stat-section-title">
-                      <Database className="me-2" />Protein Embeddings
+                    <div className="stat-section-header">
+                      <div>
+                        <div className="stat-section-title">
+                          <Database className="me-2" />
+                          Protein Embeddings
+                        </div>
+                      </div>
+                      {normalizedStages.length > 0 && (
+                        <div className="section-chip-row">
+                          <span className="section-chip">{embeddingSummary.enabled} active</span>
+                          {embeddingSummary.done > 0 && (
+                            <span className="section-chip is-success">{embeddingSummary.done} completed</span>
+                          )}
+                          {embeddingSummary.running > 0 && (
+                            <span className="section-chip is-info">{embeddingSummary.running} running</span>
+                          )}
+                          {embeddingSummary.pending > 0 && (
+                            <span className="section-chip">{embeddingSummary.pending} pending</span>
+                          )}
+                          {embeddingSummary.error > 0 && (
+                            <span className="section-chip is-danger">{embeddingSummary.error} error</span>
+                          )}
+                          {embeddingSummary.notRequired > 0 && (
+                            <span className="section-chip">{embeddingSummary.notRequired} not required</span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <p className="stat-section-desc">
-                      Embedding progress is shown per target and method. Completed stages stay visible while the next target starts.
-                    </p>
                     {normalizedStages.length === 0 && (
                       <div className="stat-hint">
                         Embedding details will appear once the active target starts prediction.
                       </div>
                     )}
-                    {normalizedStages.map((stage) => {
-                      const emb = stage.embedding || {};
-                      const state = String(emb.state || (emb.enabled ? 'pending' : 'not_required')).toLowerCase();
-                      const enabled = Boolean(emb.enabled);
-                      const cached = Number(emb.cached_already ?? emb.cachedAlready ?? 0);
-                      const need = Number(emb.need_computation ?? emb.needComputation ?? 0);
-                      const computed = Number(emb.computed ?? 0);
-                      const pct = need > 0 ? Math.min(100, Math.round((computed / need) * 100)) : 0;
-                      const badgeVariant =
-                        state === 'done' ? 'success'
-                        : state === 'running' ? 'info'
-                        : state === 'error' ? 'danger'
-                        : state === 'not_required' ? 'secondary'
-                        : 'secondary';
+                    {normalizedStages.length > 0 && (
+                      <div className="stage-list">
+                        {normalizedStages.map((stage, idx) => {
+                          const emb = stage.embedding || {};
+                          const enabled = Boolean(emb.enabled);
+                          const state = String(emb.state || (enabled ? 'pending' : 'not_required')).toLowerCase();
+                          const cached = num(emb.cached_already ?? emb.cachedAlready ?? 0);
+                          const need = num(emb.need_computation ?? emb.needComputation ?? 0);
+                          const computed = num(emb.computed ?? 0);
+                          const remaining = num(emb.remaining ?? Math.max(need - computed, 0));
+                          const pct = need > 0
+                            ? Math.min(100, Math.round((computed / need) * 100))
+                            : (state === 'done' ? 100 : 0);
+                          const badgeVariant =
+                            state === 'done' ? 'success'
+                            : state === 'running' ? 'info'
+                            : state === 'error' ? 'danger'
+                            : state === 'not_required' ? 'secondary'
+                            : 'secondary';
+                          const progressVariant =
+                            state === 'done' ? 'success'
+                            : state === 'error' ? 'danger'
+                            : 'info';
+                          const stageIndexValue = Number(stage.index);
+                          const stageNumber = Number.isFinite(stageIndexValue) ? stageIndexValue + 1 : idx + 1;
+                          const methodName = stage.method_name || stage.methodName || '';
 
-                      return (
-                        <div className="progress-item" key={`emb-${stage.index}-${stage.target}-${stage.method_key || ''}`}>
-                          <div className="progress-row">
-                            <div className="progress-title">
-                              <CheckCircleFill className="me-2" />
-                              {stage.target}
-                              {(stage.method_name || stage.methodName) ? ` - ${stage.method_name || stage.methodName}` : ''}
-                            </div>
-                            <div className="progress-count">
-                              <Badge bg={badgeVariant}>{state}</Badge>
-                            </div>
-                          </div>
-                          {!enabled || state === 'not_required' ? (
-                            <div className="stat-hint">No embedding computation is required for this stage.</div>
-                          ) : (
-                            <>
-                              <div className="progress-row">
-                                <div className="progress-count">Cached: {cached}</div>
-                                <div className="progress-count">
-                                  Computed: {computed} / {need}
+                          return (
+                            <div
+                              className="stage-card stage-card-embedding"
+                              key={`emb-${stage.index ?? idx}-${stage.target}-${stage.method_key || stage.methodKey || ''}`}
+                            >
+                              <div className="stage-card-top">
+                                <div className="stage-name-wrap">
+                                  <div className="stage-index-label">Target {stageNumber}</div>
+                                  <div className="stage-title-line">
+                                    <span className="stage-target-name">{stage.target || `Target ${stageNumber}`}</span>
+                                    {methodName && <span className="stage-method-chip">{methodName}</span>}
+                                  </div>
                                 </div>
+                                <Badge bg={badgeVariant} className="stage-status-chip">
+                                  {formatEmbeddingState(state)}
+                                </Badge>
                               </div>
-                              <ProgressBar now={pct} className="kave-progress" />
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
+
+                              {!enabled || state === 'not_required' ? (
+                                <div className="stage-empty-note">
+                                  No embedding computation required for this target.
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="stage-metrics-grid stage-metrics-grid-embedding">
+                                    <div className="metric-chip">
+                                      <span className="metric-chip-label">Cached</span>
+                                      <span className="metric-chip-value">{cached}</span>
+                                    </div>
+                                    <div className="metric-chip">
+                                      <span className="metric-chip-label">Need Compute</span>
+                                      <span className="metric-chip-value">{need}</span>
+                                    </div>
+                                    <div className="metric-chip">
+                                      <span className="metric-chip-label">Computed</span>
+                                      <span className="metric-chip-value">{computed}</span>
+                                    </div>
+                                    <div className="metric-chip">
+                                      <span className="metric-chip-label">Remaining</span>
+                                      <span className="metric-chip-value">{remaining}</span>
+                                    </div>
+                                  </div>
+
+                                  <div className="stage-progress-row">
+                                    <span>Embedding Progress</span>
+                                    <span>{pct}%</span>
+                                  </div>
+                                  <ProgressBar now={pct} variant={progressVariant} className="kave-progress" />
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
                   {/* ── COMPLETED ──────────────────────────────────────── */}
@@ -716,6 +873,99 @@ function sanitiseErrorForUser(raw) {
   return raw;
 }
 
+function formatPredictionStageStatus(state) {
+  const normalized = String(state || '').toLowerCase();
+  if (normalized === 'running') return 'Running';
+  if (normalized === 'completed') return 'Completed';
+  if (normalized === 'failed') return 'Failed';
+  if (normalized === 'pending') return 'Pending';
+  return humanizeState(normalized || 'pending');
+}
+
+function formatEmbeddingState(state) {
+  const normalized = String(state || '').toLowerCase();
+  if (normalized === 'done') return 'Completed';
+  if (normalized === 'running') return 'Running';
+  if (normalized === 'error') return 'Error';
+  if (normalized === 'not_required') return 'Not Required';
+  if (normalized === 'pending') return 'Pending';
+  return humanizeState(normalized || 'pending');
+}
+
+function humanizeState(value) {
+  const text = String(value || '')
+    .replace(/_/g, ' ')
+    .trim();
+  if (!text) return 'Pending';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function buildLegacyStages(jobStatus, metrics) {
+  const stageStatus =
+    jobStatus?.status === 'Completed' ? 'completed'
+    : jobStatus?.status === 'Failed' ? 'failed'
+    : jobStatus?.status === 'Processing' ? 'running'
+    : 'pending';
+
+  const targets = parsePredictionTargets(jobStatus?.prediction_type);
+  const safeTargets = targets.length > 0 ? targets : ['Prediction'];
+
+  return safeTargets.map((target, index) => {
+    const isPrimary = index === 0;
+    return {
+      index,
+      target,
+      method_name: legacyMethodForTarget(target, jobStatus),
+      method_key: '',
+      status: legacyStageStatusForIndex(stageStatus, index),
+      prediction: {
+        molecules_total: isPrimary ? (metrics.totalMolecules || 0) : 0,
+        molecules_processed: isPrimary ? (metrics.moleculesProcessed || 0) : 0,
+        invalid_rows: isPrimary ? (metrics.invalidRows || 0) : 0,
+        predictions_total: isPrimary ? (metrics.totalPredictions || 0) : 0,
+        predictions_made: isPrimary ? (metrics.predictionsMade || 0) : 0,
+      },
+      embedding: isPrimary && metrics.embeddingEnabled
+        ? {
+            enabled: true,
+            state: metrics.embeddingState || 'running',
+            total: metrics.embeddingTotal || 0,
+            cached_already: metrics.embeddingCachedAlready || 0,
+            need_computation: metrics.embeddingNeedComputation || 0,
+            computed: metrics.embeddingComputed || 0,
+            remaining: metrics.embeddingRemaining || 0,
+          }
+        : {
+            enabled: false,
+            state: 'not_required',
+          },
+      synthetic: true,
+    };
+  });
+}
+
+function parsePredictionTargets(predictionType) {
+  if (!predictionType || typeof predictionType !== 'string') return [];
+  return predictionType
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function legacyMethodForTarget(target, jobStatus) {
+  if (target === 'kcat') return jobStatus?.kcat_method || '';
+  if (target === 'Km') return jobStatus?.km_method || '';
+  if (target === 'kcat/Km') return jobStatus?.kcat_km_method || '';
+  return '';
+}
+
+function legacyStageStatusForIndex(globalStatus, index) {
+  if (globalStatus === 'completed') return 'completed';
+  if (globalStatus === 'failed') return index === 0 ? 'failed' : 'pending';
+  if (globalStatus === 'running') return index === 0 ? 'running' : 'pending';
+  return 'pending';
+}
+
 function num(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : 0;
@@ -729,4 +979,27 @@ function formatDuration(duration) {
 }
 function pad(n) {
   return String(n).padStart(2, '0');
+}
+
+const TRACK_JOB_ID_STORAGE_KEY = 'trackJob:lastPublicId';
+
+function readStoredTrackJobId() {
+  if (typeof window === 'undefined') return '';
+  try {
+    const raw = window.localStorage.getItem(TRACK_JOB_ID_STORAGE_KEY);
+    return typeof raw === 'string' ? raw.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredTrackJobId(value) {
+  if (typeof window === 'undefined') return;
+  const id = String(value || '').trim();
+  if (!id) return;
+  try {
+    window.localStorage.setItem(TRACK_JOB_ID_STORAGE_KEY, id);
+  } catch {
+    // ignore storage failures
+  }
 }

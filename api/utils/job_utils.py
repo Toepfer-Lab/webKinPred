@@ -354,6 +354,10 @@ def create_job_status_response_data(job) -> Dict[str, Any]:
     data = {
         "public_id": job.public_id,
         "status": job.status,
+        "prediction_type": job.prediction_type,
+        "kcat_method": job.kcat_method,
+        "km_method": job.km_method,
+        "kcat_km_method": job.kcat_km_method,
         "submission_time": job.submission_time,
         "completion_time": job.completion_time,
         "server_time": now,

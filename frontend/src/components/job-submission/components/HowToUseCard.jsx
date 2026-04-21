@@ -1,24 +1,11 @@
 // src/components/HowToUseCard.js
 
-import React, { useState } from 'react';
-import { Card, Row, Col, Alert, Button, Table } from 'react-bootstrap';
-import { BoxArrowInDown, Bullseye, CloudUpload, Cpu, Github, ChevronDown, ChevronUp, Speedometer2 } from 'react-bootstrap-icons';
+import { Card, Row, Col, Alert, Button } from 'react-bootstrap';
+import { BoxArrowInDown, Bullseye, CloudUpload, Cpu, Github } from 'react-bootstrap-icons';
 import '../../../styles/components/HowToUseCard.css';
 
 
-const BENCHMARK_DATA = [
-  { method: 'DLKcat',    uncached: '32 s',          cached: 'N/A'         },
-  { method: 'CatPred',   uncached: '14 min 0 s',    cached: '23 s'        },
-  { method: 'EITLEM',    uncached: '18 min 13 s',   cached: '4 min 11 s'  },
-  { method: 'TurNup',    uncached: '19 min 36 s',   cached: '3 min 48 s'  },
-  { method: 'CataPro',   uncached: '25 min 9 s',    cached: '41 s'        },
-  { method: 'UniKP',     uncached: '33 min 46 s',   cached: '4 min 7 s'   },
-  { method: 'KinForm-L', uncached: '54 min 38 s',   cached: '37 s'        },
-  { method: 'KinForm-H', uncached: '56 min 10 s',   cached: '36 s'        },
-];
-
 export default function HowToUseCard({ methods = {} }) {
-  const [showBenchmark, setShowBenchmark] = useState(false);
   const methodEntries = Object.entries(methods).sort(([, a], [, b]) =>
     (a.displayName || '').localeCompare(b.displayName || '')
   );
@@ -183,53 +170,6 @@ export default function HowToUseCard({ methods = {} }) {
             <div className="fmtt-cell fmtt-absent"><span className="fmtt-not-required">not applicable</span></div>
             <div className="fmtt-cell fmtt-present">Semicolon-separated <code>SMILES</code> or <code>InChI</code></div>
           </div>
-        </div>
-
-        {/* ── Timing Benchmark ── */}
-        <div className="benchmark-section mt-3">
-          <button
-            className="benchmark-toggle"
-            onClick={() => setShowBenchmark(!showBenchmark)}
-            aria-expanded={showBenchmark}
-          >
-            <span className="benchmark-toggle-left">
-              <Speedometer2 size={13} className="benchmark-toggle-icon" />
-              Runtime Benchmark
-            </span>
-            {showBenchmark ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-          </button>
-
-          {showBenchmark && (
-            <div className="benchmark-content">
-              <p className="benchmark-intro">
-                Protein language model (PLM) embeddings are cached on the server. A sequence computed once is reused for all future jobs.
-                Therefore, <strong>compute time scales with the number of unique protein sequences</strong>, not the number of rows.
-              </p>
-              <p className="benchmark-conditions">
-                Benchmark conditions: <span className="benchmark-cond-value">1,000 reactions</span> ·{' '}
-                <span className="benchmark-cond-value">100 unique proteins</span> ·{' '}
-                <span className="benchmark-cond-value">avg. length 400 aa</span>
-              </p>
-              <Table size="sm" className="benchmark-table mb-0">
-                <thead>
-                  <tr>
-                    <th>Method</th>
-                    <th>PLM embeddings not cached</th>
-                    <th>PLM embeddings cached</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {BENCHMARK_DATA.map(({ method, uncached, cached }) => (
-                    <tr key={method}>
-                      <td className="benchmark-method">{method}</td>
-                      <td>{uncached ?? '—'}</td>
-                      <td className={cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}>{cached ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
-            </div>
-          )}
         </div>
 
         <hr className="my-4" />
