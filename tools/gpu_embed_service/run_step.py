@@ -431,6 +431,15 @@ def _run_catpred_embed(parameter: str, env: dict[str, str], seq_map_json: Path) 
             "CATPRED_MEDIA_PATH / KINFORM_MEDIA_PATH."
         )
 
+    catpred_env = dict(env)
+    # Ensure the checkpoint root is trusted for torch.load deserialization.
+    existing_roots = catpred_env.get("CATPRED_TRUSTED_DESERIALIZATION_ROOTS", "")
+    trusted = [r for r in existing_roots.split(os.pathsep) if r.strip()]
+    if checkpoint_root not in trusted:
+        trusted.append(checkpoint_root)
+    catpred_env["CATPRED_TRUSTED_DESERIALIZATION_ROOTS"] = os.pathsep.join(trusted)
+    catpred_env.setdefault("CATPRED_ALLOW_UNSAFE_DESERIALIZATION", "1")
+
     _run(
         [
             catpred_python,
@@ -440,7 +449,7 @@ def _run_catpred_embed(parameter: str, env: dict[str, str], seq_map_json: Path) 
             "--checkpoint-root", checkpoint_root,
             "--cache-root", cache_root,
         ],
-        env,
+        catpred_env,
     )
 
 
