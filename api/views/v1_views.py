@@ -39,6 +39,7 @@ from api.services.similarity_service import analyze_sequence_similarity
 from api.services.embedding_progress_service import get_embedding_progress
 from api.services.gpu_embed_service import get_gpu_status
 from api.services.gpu_precompute_status_service import get_gpu_precompute_status
+from api.services.job_progress_service import get_active_stage_embedding, get_progress_summary
 from api.utils.api_auth import require_api_key
 from api.utils.job_utils import coerce_bool_param
 from api.utils.quotas import get_quota_usage
@@ -495,7 +496,30 @@ def api_job_status(request, public_id):
         "progress": progress,
     }
 
+    try:
+        stage_summary = get_progress_summary(job)
+    except Exception:
+        stage_summary = {
+            "stages": [],
+            "active_stage_index": None,
+            "completed_stage_count": 0,
+            "total_stage_count": 0,
+        }
+    data["progressStages"] = stage_summary["stages"]
+    data["activeStageIndex"] = stage_summary["active_stage_index"]
+    data["completedStageCount"] = stage_summary["completed_stage_count"]
+    data["totalStageCount"] = stage_summary["total_stage_count"]
+    progress["stages"] = stage_summary["stages"]
+    progress["activeStageIndex"] = stage_summary["active_stage_index"]
+    progress["completedStageCount"] = stage_summary["completed_stage_count"]
+    progress["totalStageCount"] = stage_summary["total_stage_count"]
+
     embedding_progress = get_embedding_progress(job.public_id)
+    if not embedding_progress:
+        try:
+            embedding_progress = get_active_stage_embedding(job)
+        except Exception:
+            embedding_progress = None
     if embedding_progress:
         progress["embedding"] = {
             "enabled": bool(embedding_progress.get("enabled", True)),

@@ -25,6 +25,11 @@ from api.prediction_engines.runtime_paths import (
     PYTHON_PATHS,
 )
 from api.services.gpu_embed_service import run_gpu_precompute_if_available
+from api.services.job_progress_service import (
+    increment_stage_validation,
+    reset_stage_prediction_metrics,
+    set_stage_prediction_total,
+)
 from api.utils.convert_to_mol import convert_to_mol, substrate_as_smiles
 from webKinPred.settings import MEDIA_ROOT
 
@@ -74,15 +79,15 @@ def kinform_predictions(
     """
     assert model_variant in {"H", "L"}, "model_variant must be 'H' or 'L'"
     model_key = f"KinForm-{model_variant}"
+    stage_target = "kcat" if kinetics_type.upper() == "KCAT" else "Km"
     print(f"Running {model_key} model (kinetics_type={kinetics_type})...")
 
     job = Job.objects.get(public_id=public_id)
-    job.molecules_processed = 0
-    job.invalid_rows = 0
-    job.predictions_made = 0
-    job.total_molecules = len(sequences)
-    job.save(
-        update_fields=["molecules_processed", "invalid_rows", "predictions_made", "total_molecules"]
+    reset_stage_prediction_metrics(
+        job_public_id=public_id,
+        target=stage_target,
+        method_key=model_key,
+        total_rows=len(sequences),
     )
 
     python_path = PYTHON_PATHS.get("KinForm", "")
@@ -117,7 +122,6 @@ def kinform_predictions(
 
     # ── Validate inputs molecule by molecule ──────────────────────────────────
     for idx, (seq, substrate) in enumerate(zip(sequences, substrates)):
-        job.molecules_processed += 1
         seq_valid = all(c in _AMINO_ACIDS for c in seq)
         mol = convert_to_mol(substrate)
 
@@ -139,12 +143,29 @@ def kinform_predictions(
             )
             print(f"  Row {idx + 1}: {reason}")
             invalid_reasons[idx] = reason
-            job.invalid_rows += 1
+            increment_stage_validation(
+                job_public_id=public_id,
+                target=stage_target,
+                method_key=model_key,
+                processed_inc=1,
+                invalid_inc=1,
+            )
+            continue
 
-        job.save(update_fields=["molecules_processed", "invalid_rows"])
+        increment_stage_validation(
+            job_public_id=public_id,
+            target=stage_target,
+            method_key=model_key,
+            processed_inc=1,
+            invalid_inc=0,
+        )
 
-    job.total_predictions = len(valid_indices)
-    job.save(update_fields=["total_predictions"])
+    set_stage_prediction_total(
+        job_public_id=public_id,
+        target=stage_target,
+        method_key=model_key,
+        total_predictions=len(valid_indices),
+    )
 
     if not valid_indices:
         return predictions, invalid_reasons
@@ -152,7 +173,7 @@ def kinform_predictions(
     _gpu = run_gpu_precompute_if_available(
         job_public_id=public_id,
         method_key=model_key,
-        target="kcat" if kinetics_type.upper() == "KCAT" else "Km",
+        target=stage_target,
         valid_sequences=valid_sequences,
         env=env,
     )
@@ -196,7 +217,7 @@ def kinform_predictions(
             env=env,
             label=model_key,
             method_key=model_key,
-            target="kcat" if kinetics_type.upper() == "KCAT" else "Km",
+            target=stage_target,
             valid_sequences=valid_sequences,
         )
     except subprocess.CalledProcessError as e:

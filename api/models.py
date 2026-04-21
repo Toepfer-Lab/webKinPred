@@ -89,6 +89,74 @@ class Job(models.Model):
         super().save(*args, **kwargs)
 
 
+class JobProgressStage(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "pending"),
+        ("running", "running"),
+        ("completed", "completed"),
+        ("failed", "failed"),
+        ("skipped", "skipped"),
+    ]
+
+    EMBEDDING_STATE_CHOICES = [
+        ("", ""),
+        ("not_required", "not_required"),
+        ("pending", "pending"),
+        ("running", "running"),
+        ("done", "done"),
+        ("error", "error"),
+    ]
+
+    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name="progress_stages")
+    stage_index = models.PositiveIntegerField()
+    target = models.CharField(max_length=32)
+    method_key = models.CharField(max_length=50)
+    method_display_name = models.CharField(max_length=100, blank=True, default="")
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    message = models.TextField(blank=True, default="")
+
+    molecules_total = models.IntegerField(default=0)
+    molecules_processed = models.IntegerField(default=0)
+    invalid_rows = models.IntegerField(default=0)
+    predictions_total = models.IntegerField(default=0)
+    predictions_made = models.IntegerField(default=0)
+
+    embedding_enabled = models.BooleanField(default=False)
+    embedding_state = models.CharField(
+        max_length=20,
+        choices=EMBEDDING_STATE_CHOICES,
+        default="",
+        blank=True,
+    )
+    embedding_method_key = models.CharField(max_length=50, blank=True, default="")
+    embedding_target = models.CharField(max_length=32, blank=True, default="")
+    embedding_total = models.IntegerField(default=0)
+    embedding_cached_already = models.IntegerField(default=0)
+    embedding_need_computation = models.IntegerField(default=0)
+    embedding_computed = models.IntegerField(default=0)
+    embedding_remaining = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["job_id", "stage_index"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "stage_index"],
+                name="api_jobprogressstage_unique_job_stage_index",
+            ),
+            models.UniqueConstraint(
+                fields=["job", "target"],
+                name="api_jobprogressstage_unique_job_target",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.job.public_id}#{self.stage_index}:{self.target} ({self.status})"
+
+
 def generate_api_key():
     """Generate a cryptographically secure API key with an 'ak_' prefix."""
     return "ak_" + secrets.token_hex(32)  # 67 chars total, 256 bits of entropy

@@ -211,24 +211,32 @@ class EmbeddingPlanServiceTests(unittest.TestCase):
             self.assertEqual(plan.need_computation, 1)
             self.assertEqual(eps.gpu_step_work(plan), {"turnup_esm1b": ["sid_2"]})
 
-    def test_eitlem_gpu_offload_disabled(self):
+    def test_eitlem_gpu_supported_with_esm1v_cache(self):
+        """EITLEM is GPU-enabled; cache paths are esm1v/ (full residue matrix)."""
         with tempfile.TemporaryDirectory(prefix="emb_plan_eitlem_") as tmp:
             tmp_path = Path(tmp)
             media = tmp_path / "media"
             tools = tmp_path / "tools"
+
+            # sid_1 already has a cached representation; sid_2 does not.
             _touch(media / "sequence_info" / "esm1v" / "sid_1.npy")
 
             with patch.object(eps, "resolve_media_and_tools", return_value=(media, tools)):
-                with patch.object(eps, "resolve_seq_ids_via_cli", return_value=["sid_1"]):
+                with patch.object(eps, "resolve_seq_ids_via_cli", return_value=["sid_1", "sid_2"]):
                     plan = eps.build_embedding_plan(
                         method_key="EITLEM",
                         target="kcat",
-                        sequences=["ACD"],
+                        sequences=["ACD", "EFG"],
                         env={},
                     )
 
-            self.assertFalse(plan.gpu_supported)
-            self.assertEqual(plan.gpu_reason, "gpu_offload_unsupported_full_matrix_artifacts")
+            self.assertTrue(plan.gpu_supported)
+            self.assertIsNone(plan.gpu_reason)
+            self.assertEqual(plan.profile, "eitlem_esm1v")
+            self.assertEqual(plan.total, 2)           # 1 file per seq_id
+            self.assertEqual(plan.cached_already, 1)
+            self.assertEqual(plan.need_computation, 1)
+            self.assertEqual(eps.gpu_step_work(plan), {"eitlem_esm1v": ["sid_2"]})
 
 
 if __name__ == "__main__":

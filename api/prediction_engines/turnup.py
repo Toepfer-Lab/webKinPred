@@ -24,6 +24,11 @@ from api.prediction_engines.runtime_paths import (
     PYTHON_PATHS,
 )
 from api.services.gpu_embed_service import run_gpu_precompute_if_available
+from api.services.job_progress_service import (
+    increment_stage_validation,
+    reset_stage_prediction_metrics,
+    set_stage_prediction_total,
+)
 
 _log = logging.getLogger(__name__)
 from api.utils.convert_to_mol import convert_to_mol, validated_molecule_text
@@ -72,12 +77,11 @@ def turnup_predictions(
     print("Running TurNup model...")
 
     job = Job.objects.get(public_id=public_id)
-    job.molecules_processed = 0
-    job.invalid_rows = 0
-    job.predictions_made = 0
-    job.total_molecules = len(sequences)
-    job.save(
-        update_fields=["molecules_processed", "invalid_rows", "predictions_made", "total_molecules"]
+    reset_stage_prediction_metrics(
+        job_public_id=public_id,
+        target="kcat",
+        method_key="TurNup",
+        total_rows=len(sequences),
     )
 
     python_path = PYTHON_PATHS.get("TurNup", "")
@@ -101,7 +105,6 @@ def turnup_predictions(
 
     # ── Validate inputs reaction by reaction ──────────────────────────────────
     for idx, (seq, sub_str, prod_str) in enumerate(zip(sequences, substrates, products)):
-        job.molecules_processed += 1
 
         sub_tokens = [s.strip() for s in str(sub_str).split(";") if s.strip()]
         prod_tokens = [p.strip() for p in str(prod_str).split(";") if p.strip()]
@@ -121,7 +124,13 @@ def turnup_predictions(
         if reason:
             print(f"  Row {idx + 1}: {reason}")
             invalid_reasons[idx] = reason
-            job.invalid_rows += 1
+            increment_stage_validation(
+                job_public_id=public_id,
+                target="kcat",
+                method_key="TurNup",
+                processed_inc=1,
+                invalid_inc=1,
+            )
         else:
             if canonicalize_substrates:
                 sub_value = ";".join(Chem.MolToInchi(mol) for mol in sub_mols)
@@ -133,11 +142,20 @@ def turnup_predictions(
             valid_prod_values.append(prod_value)
             valid_sequences.append(seq)
             valid_indices.append(idx)
+            increment_stage_validation(
+                job_public_id=public_id,
+                target="kcat",
+                method_key="TurNup",
+                processed_inc=1,
+                invalid_inc=0,
+            )
 
-        job.save(update_fields=["molecules_processed", "invalid_rows"])
-
-    job.total_predictions = len(valid_indices)
-    job.save(update_fields=["total_predictions"])
+    set_stage_prediction_total(
+        job_public_id=public_id,
+        target="kcat",
+        method_key="TurNup",
+        total_predictions=len(valid_indices),
+    )
 
     if not valid_indices:
         return predictions, invalid_reasons

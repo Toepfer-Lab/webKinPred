@@ -11,6 +11,7 @@ from api.services.embedding_progress_service import (
     start_embedding_tracking,
     stop_embedding_tracking,
 )
+from api.services.job_progress_service import set_stage_prediction_progress
 
 
 def run_prediction_subprocess(
@@ -86,9 +87,20 @@ def run_prediction_subprocess(
                     if len(parts) >= 2:
                         try:
                             done, total = parts[1].split("/")
-                            job.predictions_made = int(done)
-                            job.total_predictions = int(total)
-                            job.save(update_fields=["predictions_made", "total_predictions"])
+                            done_i = int(done)
+                            total_i = int(total)
+                            if method_key and target:
+                                set_stage_prediction_progress(
+                                    job_public_id=job.public_id,
+                                    target=target,
+                                    method_key=method_key,
+                                    done=done_i,
+                                    total=total_i,
+                                )
+                            else:
+                                job.predictions_made = done_i
+                                job.total_predictions = total_i
+                                job.save(update_fields=["predictions_made", "total_predictions"])
                         except (ValueError, AttributeError):
                             pass  # malformed progress line — ignore
 

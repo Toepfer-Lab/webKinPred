@@ -52,6 +52,60 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _sync_stage_embedding_progress(
+    *,
+    job_public_id: str,
+    target: str,
+    method_key: str,
+    enabled: bool,
+    state: str,
+    total: int,
+    cached_already: int,
+    need_computation: int,
+    computed: int,
+    remaining: int,
+) -> None:
+    try:
+        from api.services.job_progress_service import set_stage_embedding_progress
+
+        set_stage_embedding_progress(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            enabled=enabled,
+            state=state,
+            total=total,
+            cached_already=cached_already,
+            need_computation=need_computation,
+            computed=computed,
+            remaining=remaining,
+        )
+    except Exception:
+        # Tracking persistence must never block prediction execution.
+        return
+
+
+def _sync_stage_embedding_state(
+    *,
+    job_public_id: str,
+    target: str,
+    method_key: str,
+    state: str,
+) -> None:
+    try:
+        from api.services.job_progress_service import set_stage_embedding_state
+
+        set_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state=state,
+        )
+    except Exception:
+        # Tracking persistence must never block prediction execution.
+        return
+
+
 def clear_embedding_progress(job_public_id: str) -> None:
     redis_conn.delete(_redis_key(job_public_id))
 
@@ -116,10 +170,22 @@ def start_embedding_tracking(
     """
     if not valid_sequences:
         clear_embedding_progress(job_public_id)
+        _sync_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state="not_required",
+        )
         return False
 
     if method_key == "DLKcat":
         clear_embedding_progress(job_public_id)
+        _sync_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state="not_required",
+        )
         return False
 
     try:
@@ -132,6 +198,12 @@ def start_embedding_tracking(
     except Exception as exc:  # fail-open: prediction must continue
         print(f"[embedding_progress] setup skipped for {job_public_id}/{method_key}: {exc}")
         clear_embedding_progress(job_public_id)
+        _sync_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state="error",
+        )
         return False
 
     # Active-method-only semantics: one tracker per job.
@@ -369,6 +441,18 @@ class _EmbeddingTracker:
 
         payload = self._payload()
         redis_conn.set(_redis_key(self.job_public_id), json.dumps(payload), ex=_TTL_SECONDS)
+        _sync_stage_embedding_progress(
+            job_public_id=self.job_public_id,
+            target=self.target,
+            method_key=self.method_key,
+            enabled=True,
+            state=self.state,
+            total=int(self.total),
+            cached_already=int(self.cached_already),
+            need_computation=int(self.need_computation),
+            computed=int(self.computed),
+            remaining=int(self.remaining),
+        )
         self._last_payload_signature = signature
         self._last_write_monotonic = now
         self._dirty = False
