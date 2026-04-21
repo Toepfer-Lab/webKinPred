@@ -73,6 +73,14 @@ class MethodBenchmarkResult:
     cached: SingleRunResult
 
 
+@dataclass
+class PendingBenchmarkJob:
+    method_key: str
+    run_key: str
+    public_id: str
+    require_gpu: bool
+
+
 class Command(BaseCommand):
     help = (
         "Benchmark kcat inference time for each registered kcat-capable method, "
@@ -214,8 +222,6 @@ class Command(BaseCommand):
             raise CommandError("Missing API key. Pass --api-key or set WEBKINPRED_API_KEY.")
         if poll_seconds <= 0:
             raise CommandError("--poll-seconds must be > 0.")
-        if timeout_seconds <= 0:
-            raise CommandError("--timeout-seconds must be > 0.")
         if request_timeout_seconds <= 0:
             raise CommandError("--request-timeout-seconds must be > 0.")
 
@@ -285,9 +291,18 @@ class Command(BaseCommand):
             "Cross-method overlap is disabled: protein sequences are unique across methods "
             "to avoid shared PLM cache effects."
         )
+        self.stdout.write(
+            "Polling behavior: submit all jobs in each phase, then wait with no timeout "
+            "until every submitted job reaches a terminal status."
+        )
+        self.stdout.write(
+            f"--timeout-seconds={timeout_seconds} is accepted for compatibility and ignored."
+        )
         self.stdout.write("")
 
-        results: list[MethodBenchmarkResult] = []
+        raw_results: dict[str, dict[str, SingleRunResult | None]] = {}
+        stage1_jobs: dict[str, PendingBenchmarkJob] = {}
+        cached_inputs: dict[str, pd.DataFrame] = {}
         used_sequences: set[str] = set()
 
         for idx, method_key in enumerate(selected_keys, start=1):
@@ -295,10 +310,15 @@ class Command(BaseCommand):
             method_seed = self._derive_method_seed(run_seed, method_key)
             rng_cpu = random.Random(method_seed)
             rng_gpu = random.Random(method_seed ^ 0x9E3779B97F4A7C15)
+            raw_results[method_key] = {
+                "uncached_cpu": None,
+                "uncached_gpu": None,
+                "cached": None,
+            }
 
             if gpu_only:
-                uncached_cpu_result = self._skipped_run("gpu_only_mode")
-                cached_result = self._skipped_run("gpu_only_mode")
+                raw_results[method_key]["uncached_cpu"] = self._skipped_run("gpu_only_mode")
+                raw_results[method_key]["cached"] = self._skipped_run("gpu_only_mode")
             else:
                 proteins_cpu = self._generate_unique_proteins(
                     rng=rng_cpu,
@@ -312,32 +332,42 @@ class Command(BaseCommand):
                     proteins=proteins_cpu,
                     num_reactions=num_reactions,
                 )
+                cached_inputs[method_key] = df_cpu
 
-                uncached_cpu_result = self._run_single_benchmark(
+                uncached_cpu_submission = self._submit_single_benchmark(
                     session=session,
                     api_base_url=api_base_url,
                     method_key=method_key,
                     input_df=df_cpu,
                     handle_long_sequences=handle_long_sequences,
-                    poll_seconds=poll_seconds,
-                    timeout_seconds=timeout_seconds,
                     request_timeout_seconds=request_timeout_seconds,
-                    require_gpu=False,
                 )
-                cached_result = self._run_single_benchmark(
-                    session=session,
-                    api_base_url=api_base_url,
-                    method_key=method_key,
-                    input_df=df_cpu,
-                    handle_long_sequences=handle_long_sequences,
-                    poll_seconds=poll_seconds,
-                    timeout_seconds=timeout_seconds,
-                    request_timeout_seconds=request_timeout_seconds,
-                    require_gpu=False,
-                )
+                if uncached_cpu_submission is None:
+                    raw_results[method_key]["uncached_cpu"] = SingleRunResult(
+                        compute_seconds=None,
+                        status="Failed",
+                        error_message="Submit response did not include jobId.",
+                        public_id="",
+                        gpu_used=None,
+                        gpu_attempted=None,
+                        gpu_completed=None,
+                        gpu_reason=None,
+                    )
+                elif isinstance(uncached_cpu_submission, SingleRunResult):
+                    raw_results[method_key]["uncached_cpu"] = uncached_cpu_submission
+                else:
+                    stage1_jobs[uncached_cpu_submission] = PendingBenchmarkJob(
+                        method_key=method_key,
+                        run_key="uncached_cpu",
+                        public_id=uncached_cpu_submission,
+                        require_gpu=False,
+                    )
+                    self.stdout.write(f"  submitted uncached cpu: {uncached_cpu_submission}")
 
             if method_key not in GPU_OFFLOAD_KCAT_METHOD_IDS:
-                uncached_gpu_result = self._skipped_run("gpu_offload_not_supported_for_method")
+                raw_results[method_key]["uncached_gpu"] = self._skipped_run(
+                    "gpu_offload_not_supported_for_method"
+                )
             else:
                 proteins_gpu = self._generate_unique_proteins(
                     rng=rng_gpu,
@@ -351,18 +381,139 @@ class Command(BaseCommand):
                     proteins=proteins_gpu,
                     num_reactions=num_reactions,
                 )
-                uncached_gpu_result = self._run_single_benchmark(
+                uncached_gpu_submission = self._submit_single_benchmark(
                     session=session,
                     api_base_url=api_base_url,
                     method_key=method_key,
                     input_df=df_gpu,
                     handle_long_sequences=handle_long_sequences,
-                    poll_seconds=poll_seconds,
-                    timeout_seconds=timeout_seconds,
                     request_timeout_seconds=request_timeout_seconds,
-                    require_gpu=True,
                 )
+                if uncached_gpu_submission is None:
+                    raw_results[method_key]["uncached_gpu"] = SingleRunResult(
+                        compute_seconds=None,
+                        status="Failed",
+                        error_message="Submit response did not include jobId.",
+                        public_id="",
+                        gpu_used=None,
+                        gpu_attempted=None,
+                        gpu_completed=None,
+                        gpu_reason=None,
+                    )
+                elif isinstance(uncached_gpu_submission, SingleRunResult):
+                    raw_results[method_key]["uncached_gpu"] = uncached_gpu_submission
+                else:
+                    stage1_jobs[uncached_gpu_submission] = PendingBenchmarkJob(
+                        method_key=method_key,
+                        run_key="uncached_gpu",
+                        public_id=uncached_gpu_submission,
+                        require_gpu=True,
+                    )
+                    self.stdout.write(f"  submitted uncached gpu: {uncached_gpu_submission}")
 
+        if stage1_jobs:
+            self.stdout.write("")
+            self.stdout.write(
+                f"Waiting for stage 1 jobs: {len(stage1_jobs)} submitted."
+            )
+            stage1_results = self._poll_submitted_jobs_until_terminal(
+                session=session,
+                api_base_url=api_base_url,
+                jobs=stage1_jobs,
+                poll_seconds=poll_seconds,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+            for public_id, result in stage1_results.items():
+                job = stage1_jobs[public_id]
+                raw_results[job.method_key][job.run_key] = result
+
+        if not gpu_only:
+            cached_jobs: dict[str, PendingBenchmarkJob] = {}
+            self.stdout.write("")
+            self.stdout.write("Submitting cached repeat jobs after uncached CPU warm-up.")
+            for idx, method_key in enumerate(selected_keys, start=1):
+                self.stdout.write(f"[{idx}/{len(selected_keys)}] {method_key}")
+                df_cpu = cached_inputs.get(method_key)
+                if df_cpu is None:
+                    raw_results[method_key]["cached"] = SingleRunResult(
+                        compute_seconds=None,
+                        status="Failed",
+                        error_message="Internal error: missing cached input dataframe.",
+                        public_id="",
+                        gpu_used=None,
+                        gpu_attempted=None,
+                        gpu_completed=None,
+                        gpu_reason=None,
+                    )
+                    continue
+
+                cached_submission = self._submit_single_benchmark(
+                    session=session,
+                    api_base_url=api_base_url,
+                    method_key=method_key,
+                    input_df=df_cpu,
+                    handle_long_sequences=handle_long_sequences,
+                    request_timeout_seconds=request_timeout_seconds,
+                )
+                if cached_submission is None:
+                    raw_results[method_key]["cached"] = SingleRunResult(
+                        compute_seconds=None,
+                        status="Failed",
+                        error_message="Submit response did not include jobId.",
+                        public_id="",
+                        gpu_used=None,
+                        gpu_attempted=None,
+                        gpu_completed=None,
+                        gpu_reason=None,
+                    )
+                elif isinstance(cached_submission, SingleRunResult):
+                    raw_results[method_key]["cached"] = cached_submission
+                else:
+                    cached_jobs[cached_submission] = PendingBenchmarkJob(
+                        method_key=method_key,
+                        run_key="cached",
+                        public_id=cached_submission,
+                        require_gpu=False,
+                    )
+                    self.stdout.write(f"  submitted cached: {cached_submission}")
+
+            if cached_jobs:
+                self.stdout.write("")
+                self.stdout.write(
+                    f"Waiting for cached jobs: {len(cached_jobs)} submitted."
+                )
+                cached_results = self._poll_submitted_jobs_until_terminal(
+                    session=session,
+                    api_base_url=api_base_url,
+                    jobs=cached_jobs,
+                    poll_seconds=poll_seconds,
+                    request_timeout_seconds=request_timeout_seconds,
+                )
+                for public_id, result in cached_results.items():
+                    job = cached_jobs[public_id]
+                    raw_results[job.method_key][job.run_key] = result
+
+        results: list[MethodBenchmarkResult] = []
+        for method_key in selected_keys:
+            method_raw = raw_results[method_key]
+            uncached_cpu_result = method_raw["uncached_cpu"] or SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message="Uncached CPU job was not submitted.",
+                public_id="",
+            )
+            uncached_gpu_result = method_raw["uncached_gpu"] or SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message="Uncached GPU job was not submitted.",
+                public_id="",
+            )
+            cached_result = method_raw["cached"] or SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message="Cached job was not submitted.",
+                public_id="",
+            )
             method_result = MethodBenchmarkResult(
                 method_key=method_key,
                 uncached_cpu=uncached_cpu_result,
@@ -370,7 +521,6 @@ class Command(BaseCommand):
                 cached=cached_result,
             )
             results.append(method_result)
-
             self.stdout.write(self._format_method_summary(method_result, gpu_only=gpu_only))
             self.stdout.write("")
 
@@ -547,7 +697,7 @@ class Command(BaseCommand):
             gpu_reason=None,
         )
 
-    def _run_single_benchmark(
+    def _submit_single_benchmark(
         self,
         *,
         session: requests.Session,
@@ -555,11 +705,8 @@ class Command(BaseCommand):
         method_key: str,
         input_df: pd.DataFrame,
         handle_long_sequences: str,
-        poll_seconds: float,
-        timeout_seconds: int,
         request_timeout_seconds: float,
-        require_gpu: bool,
-    ) -> SingleRunResult:
+    ) -> str | SingleRunResult | None:
         payload = {
             "targets": ["kcat"],
             "methods": {"kcat": method_key},
@@ -620,26 +767,152 @@ class Command(BaseCommand):
 
         public_id = str(submit_data.get("jobId", "")).strip()
         if not public_id:
+            return None
+
+        return public_id
+
+    def _poll_submitted_jobs_until_terminal(
+        self,
+        *,
+        session: requests.Session,
+        api_base_url: str,
+        jobs: dict[str, PendingBenchmarkJob],
+        poll_seconds: float,
+        request_timeout_seconds: float,
+    ) -> dict[str, SingleRunResult]:
+        remaining = dict(jobs)
+        completed: dict[str, SingleRunResult] = {}
+        total = len(remaining)
+        while True:
+            for public_id, job in list(remaining.items()):
+                maybe_result = self._check_job_terminal_once(
+                    session=session,
+                    api_base_url=api_base_url,
+                    public_id=public_id,
+                    request_timeout_seconds=request_timeout_seconds,
+                    require_gpu=job.require_gpu,
+                )
+                if maybe_result is None:
+                    continue
+
+                completed[public_id] = maybe_result
+                del remaining[public_id]
+                self.stdout.write(
+                    f"  [{len(completed)}/{total}] {job.method_key} {job.run_key}: "
+                    f"{maybe_result.status} ({public_id})"
+                )
+
+            if not remaining:
+                return completed
+
+            time.sleep(poll_seconds)
+
+    def _check_job_terminal_once(
+        self,
+        *,
+        session: requests.Session,
+        api_base_url: str,
+        public_id: str,
+        request_timeout_seconds: float,
+        require_gpu: bool,
+    ) -> SingleRunResult | None:
+        status_url = f"{api_base_url}/status/{public_id}/"
+        try:
+            response = session.get(
+                status_url,
+                timeout=request_timeout_seconds,
+            )
+        except requests.RequestException:
+            return None
+
+        if response.status_code >= 400:
             return SingleRunResult(
                 compute_seconds=None,
                 status="Failed",
-                error_message="Submit response did not include jobId.",
-                public_id="",
+                error_message=(
+                    f"Status failed ({response.status_code}) for job {public_id}: "
+                    f"{self._extract_error_message(response)}"
+                ),
+                public_id=public_id,
                 gpu_used=None,
                 gpu_attempted=None,
                 gpu_completed=None,
                 gpu_reason=None,
             )
 
-        return self._poll_job_until_terminal(
-            session=session,
-            api_base_url=api_base_url,
+        try:
+            status_data = response.json()
+        except ValueError:
+            return SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message=f"Status response for job {public_id} was not valid JSON.",
+                public_id=public_id,
+                gpu_used=None,
+                gpu_attempted=None,
+                gpu_completed=None,
+                gpu_reason=None,
+            )
+
+        status = str(status_data.get("status", "Unknown")).strip()
+        compute_seconds = self._to_optional_float(status_data.get("computeSeconds"))
+        error_message = str(status_data.get("error", "")).strip()
+        gpu_info = status_data.get("gpuPrecompute")
+        gpu_used = None
+        gpu_attempted = None
+        gpu_completed = None
+        gpu_reason = None
+        if isinstance(gpu_info, dict):
+            gpu_used = bool(gpu_info.get("usedGpu", gpu_info.get("used_gpu", False)))
+            gpu_attempted = bool(gpu_info.get("attempted", False))
+            gpu_completed = bool(gpu_info.get("completed", False))
+            gpu_reason = str(gpu_info.get("reason", "")).strip() or None
+
+        if status not in {"Completed", "Failed"}:
+            return None
+
+        result = SingleRunResult(
+            compute_seconds=compute_seconds,
+            status=status,
+            error_message=error_message,
             public_id=public_id,
-            poll_seconds=poll_seconds,
-            timeout_seconds=timeout_seconds,
-            request_timeout_seconds=request_timeout_seconds,
-            require_gpu=require_gpu,
+            gpu_used=gpu_used,
+            gpu_attempted=gpu_attempted,
+            gpu_completed=gpu_completed,
+            gpu_reason=gpu_reason,
         )
+        if require_gpu and status == "Completed":
+            if gpu_used is not True:
+                return SingleRunResult(
+                    compute_seconds=compute_seconds,
+                    status="Failed",
+                    error_message=(
+                        "GPU run completed but did not report usedGpu=true "
+                        f"(gpu_reason={gpu_reason!r})."
+                    ),
+                    public_id=public_id,
+                    gpu_used=gpu_used,
+                    gpu_attempted=gpu_attempted,
+                    gpu_completed=gpu_completed,
+                    gpu_reason=gpu_reason,
+                )
+            if gpu_completed is not True:
+                return SingleRunResult(
+                    compute_seconds=compute_seconds,
+                    status="Failed",
+                    error_message=(
+                        "GPU run completed but gpuPrecompute.completed was not true "
+                        f"(gpu_reason={gpu_reason!r})."
+                    ),
+                    public_id=public_id,
+                    gpu_used=gpu_used,
+                    gpu_attempted=gpu_attempted,
+                    gpu_completed=gpu_completed,
+                    gpu_reason=gpu_reason,
+                )
+        if require_gpu and status == "Failed" and not error_message:
+            result.error_message = "Prediction failed during required GPU run."
+        return result
 
     def _poll_job_until_terminal(
         self,
@@ -652,128 +925,58 @@ class Command(BaseCommand):
         request_timeout_seconds: float,
         require_gpu: bool,
     ) -> SingleRunResult:
-        deadline = time.monotonic() + timeout_seconds
-        status_url = f"{api_base_url}/status/{public_id}/"
-        last_error = ""
-        last_status = "Pending"
-
+        del timeout_seconds
         while True:
-            if time.monotonic() > deadline:
-                detail = f"Last status: {last_status}"
-                if last_error:
-                    detail += f" | Last poll error: {last_error}"
-                return SingleRunResult(
-                    compute_seconds=None,
-                    status="Failed",
-                    error_message=(
-                        f"Timed out after {timeout_seconds}s waiting for job {public_id}. {detail}"
-                    ),
-                    public_id=public_id,
-                    gpu_used=None,
-                    gpu_attempted=None,
-                    gpu_completed=None,
-                    gpu_reason=None,
-                )
-
-            try:
-                response = session.get(
-                    status_url,
-                    timeout=request_timeout_seconds,
-                )
-            except requests.RequestException as exc:
-                last_error = str(exc)
-                time.sleep(poll_seconds)
-                continue
-
-            if response.status_code >= 400:
-                return SingleRunResult(
-                    compute_seconds=None,
-                    status="Failed",
-                    error_message=(
-                        f"Status failed ({response.status_code}) for job {public_id}: "
-                        f"{self._extract_error_message(response)}"
-                    ),
-                    public_id=public_id,
-                    gpu_used=None,
-                    gpu_attempted=None,
-                    gpu_completed=None,
-                    gpu_reason=None,
-                )
-
-            try:
-                status_data = response.json()
-            except ValueError:
-                return SingleRunResult(
-                    compute_seconds=None,
-                    status="Failed",
-                    error_message=f"Status response for job {public_id} was not valid JSON.",
-                    public_id=public_id,
-                    gpu_used=None,
-                    gpu_attempted=None,
-                    gpu_completed=None,
-                    gpu_reason=None,
-                )
-
-            status = str(status_data.get("status", "Unknown")).strip()
-            last_status = status or "Unknown"
-            compute_seconds = self._to_optional_float(status_data.get("computeSeconds"))
-            error_message = str(status_data.get("error", "")).strip()
-            gpu_info = status_data.get("gpuPrecompute")
-            gpu_used = None
-            gpu_attempted = None
-            gpu_completed = None
-            gpu_reason = None
-            if isinstance(gpu_info, dict):
-                gpu_used = bool(gpu_info.get("usedGpu", gpu_info.get("used_gpu", False)))
-                gpu_attempted = bool(gpu_info.get("attempted", False))
-                gpu_completed = bool(gpu_info.get("completed", False))
-                gpu_reason = str(gpu_info.get("reason", "")).strip() or None
-
-            if status in {"Completed", "Failed"}:
-                result = SingleRunResult(
-                    compute_seconds=compute_seconds,
-                    status=status,
-                    error_message=error_message,
-                    public_id=public_id,
-                    gpu_used=gpu_used,
-                    gpu_attempted=gpu_attempted,
-                    gpu_completed=gpu_completed,
-                    gpu_reason=gpu_reason,
-                )
-                if require_gpu and status == "Completed":
-                    if gpu_used is not True:
-                        return SingleRunResult(
-                            compute_seconds=compute_seconds,
-                            status="Failed",
-                            error_message=(
-                                "GPU run completed but did not report usedGpu=true "
-                                f"(gpu_reason={gpu_reason!r})."
-                            ),
-                            public_id=public_id,
-                            gpu_used=gpu_used,
-                            gpu_attempted=gpu_attempted,
-                            gpu_completed=gpu_completed,
-                            gpu_reason=gpu_reason,
-                        )
-                    if gpu_completed is not True:
-                        return SingleRunResult(
-                            compute_seconds=compute_seconds,
-                            status="Failed",
-                            error_message=(
-                                "GPU run completed but gpuPrecompute.completed was not true "
-                                f"(gpu_reason={gpu_reason!r})."
-                            ),
-                            public_id=public_id,
-                            gpu_used=gpu_used,
-                            gpu_attempted=gpu_attempted,
-                            gpu_completed=gpu_completed,
-                            gpu_reason=gpu_reason,
-                        )
-                if require_gpu and status == "Failed" and not error_message:
-                    result.error_message = "Prediction failed during required GPU run."
-                return result
-
+            maybe_result = self._check_job_terminal_once(
+                session=session,
+                api_base_url=api_base_url,
+                public_id=public_id,
+                request_timeout_seconds=request_timeout_seconds,
+                require_gpu=require_gpu,
+            )
+            if maybe_result is not None:
+                return maybe_result
             time.sleep(poll_seconds)
+
+    def _run_single_benchmark(
+        self,
+        *,
+        session: requests.Session,
+        api_base_url: str,
+        method_key: str,
+        input_df: pd.DataFrame,
+        handle_long_sequences: str,
+        poll_seconds: float,
+        timeout_seconds: int,
+        request_timeout_seconds: float,
+        require_gpu: bool,
+    ) -> SingleRunResult:
+        submission = self._submit_single_benchmark(
+            session=session,
+            api_base_url=api_base_url,
+            method_key=method_key,
+            input_df=input_df,
+            handle_long_sequences=handle_long_sequences,
+            request_timeout_seconds=request_timeout_seconds,
+        )
+        if submission is None:
+            return SingleRunResult(
+                compute_seconds=None,
+                status="Failed",
+                error_message="Submit response did not include jobId.",
+                public_id="",
+            )
+        if isinstance(submission, SingleRunResult):
+            return submission
+        return self._poll_job_until_terminal(
+            session=session,
+            api_base_url=api_base_url,
+            public_id=submission,
+            poll_seconds=poll_seconds,
+            timeout_seconds=timeout_seconds,
+            request_timeout_seconds=request_timeout_seconds,
+            require_gpu=require_gpu,
+        )
 
     def _fetch_kcat_methods(
         self,

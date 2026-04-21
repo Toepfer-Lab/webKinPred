@@ -226,6 +226,18 @@ def _prepare_seq_pooled_cache(
         for row, seq_id in zip(rows, seq_ids)
     }
 
+    # Use one iterdir() per checkpoint directory instead of one path.exists() per
+    # (seq_id, model_key) pair — the latter generates 7+ NFS lstat() calls each.
+    cached_by_model: dict[str, set[str]] = {}
+    for model_key, _ in checkpoint_models:
+        model_cache_dir = (cache_root / parameter / model_key).resolve()
+        if model_cache_dir.is_dir():
+            cached_by_model[model_key] = {
+                f.stem for f in model_cache_dir.iterdir() if f.suffix == ".pt"
+            }
+        else:
+            cached_by_model[model_key] = set()
+
     cache_paths: dict[str, dict[str, Path]] = {}
     missing_by_model: dict[str, list[str]] = {}
     any_missing = False
@@ -239,7 +251,7 @@ def _prepare_seq_pooled_cache(
                 seq_id=seq_id,
             )
             seq_cache_paths[model_key] = path
-            if not path.exists():
+            if seq_id not in cached_by_model[model_key]:
                 any_missing = True
                 missing_by_model.setdefault(model_key, []).append(seq_id)
         cache_paths[seq_id] = seq_cache_paths

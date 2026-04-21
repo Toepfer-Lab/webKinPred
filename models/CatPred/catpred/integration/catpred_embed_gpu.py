@@ -211,11 +211,22 @@ def main() -> None:
     print(f"Discovered {len(checkpoint_models)} checkpoint(s) under {checkpoint_dir}.")
 
     # ── Determine which (seq_id, model_key) pairs still need computation ──────
+    # Use one iterdir() per checkpoint directory instead of one path.exists() per
+    # (seq_id, model_key) pair — the latter generates 7+ NFS lstat() calls each.
+    cached_by_model: dict[str, set[str]] = {}
+    for model_key, _ in checkpoint_models:
+        model_cache_dir = (cache_root / parameter / model_key).resolve()
+        if model_cache_dir.is_dir():
+            cached_by_model[model_key] = {
+                f.stem for f in model_cache_dir.iterdir() if f.suffix == ".pt"
+            }
+        else:
+            cached_by_model[model_key] = set()
+
     missing_by_model: dict[str, list[str]] = {}
     for seq_id in seq_id_to_seq:
         for model_key, _ in checkpoint_models:
-            path = _cache_path(cache_root, parameter, model_key, seq_id)
-            if not path.exists():
+            if seq_id not in cached_by_model[model_key]:
                 missing_by_model.setdefault(model_key, []).append(seq_id)
 
     missing_seq_ids: set[str] = {
