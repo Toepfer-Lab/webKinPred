@@ -48,7 +48,7 @@ class EmbeddingPlanServiceTests(unittest.TestCase):
                 (media / "sequence_info" / root / "mean_vecs" / "sid_3.npy").unlink()
                 (media / "sequence_info" / root / "weighted_vecs" / "sid_3.npy").unlink()
 
-            # binding site table includes sid_1 and sid_2 only
+            # binding site table includes sid_1 and sid_2 only (sid_3 missing)
             bs_path = media / "pseq2sites" / "binding_sites_all.tsv"
             bs_path.parent.mkdir(parents=True, exist_ok=True)
             bs_path.write_text("PDB\tscore\n" "sid_1\t0.9\n" "sid_2\t0.2\n", encoding="utf-8")
@@ -68,11 +68,103 @@ class EmbeddingPlanServiceTests(unittest.TestCase):
             self.assertEqual(plan.cached_already, 1)
             self.assertEqual(plan.need_computation, 2)
 
+            step_keys = [s.step_key for s in plan.step_plans]
+            self.assertNotIn("kinform_pseq2sites", step_keys)
+            self.assertNotIn("kinform_prott5_layers", step_keys)
+
             by_step = {step.step_key: set(step.missing_seq_ids) for step in plan.step_plans}
-            self.assertEqual(by_step["kinform_pseq2sites"], {"sid_3"})
+            # sid_3: missing T5 embeddings AND binding site row
+            # sid_2: has all T5 + binding sites, not in t5_full
+            self.assertEqual(by_step["kinform_t5_full"], {"sid_3"})
             self.assertEqual(by_step["kinform_esm2_layers"], {"sid_2"})
             self.assertEqual(by_step["kinform_esmc_layers"], set())
-            self.assertEqual(by_step["kinform_prott5_layers"], {"sid_3"})
+
+    def test_kinform_binding_site_only_missing(self):
+        """seq_id with complete T5 embeddings but absent from binding sites TSV → kinform_t5_full."""
+        with tempfile.TemporaryDirectory(prefix="emb_plan_kinform_bs_") as tmp:
+            tmp_path = Path(tmp)
+            media = tmp_path / "media"
+            tools = tmp_path / "tools"
+            seq_ids = ["sid_a"]
+
+            for root in ["prot_t5_layer_19", "prot_t5_last"]:
+                _touch(media / "sequence_info" / root / "mean_vecs" / "sid_a.npy")
+                _touch(media / "sequence_info" / root / "weighted_vecs" / "sid_a.npy")
+            for root in ["esm2_layer_26", "esm2_layer_29", "esmc_layer_24", "esmc_layer_32"]:
+                _touch(media / "sequence_info" / root / "mean_vecs" / "sid_a.npy")
+                _touch(media / "sequence_info" / root / "weighted_vecs" / "sid_a.npy")
+
+            # No binding sites TSV at all
+            with patch.object(eps, "resolve_media_and_tools", return_value=(media, tools)):
+                with patch.object(eps, "resolve_seq_ids_via_cli", return_value=seq_ids):
+                    plan = eps.build_embedding_plan(
+                        method_key="KinForm-H",
+                        target="kcat",
+                        sequences=["MSEQ"],
+                        env={},
+                    )
+
+            by_step = {s.step_key: set(s.missing_seq_ids) for s in plan.step_plans}
+            self.assertIn("sid_a", by_step["kinform_t5_full"])
+
+    def test_kinform_t5_weighted_only_missing(self):
+        """seq_id with mean but not weighted T5 → included in kinform_t5_full."""
+        with tempfile.TemporaryDirectory(prefix="emb_plan_kinform_w_") as tmp:
+            tmp_path = Path(tmp)
+            media = tmp_path / "media"
+            tools = tmp_path / "tools"
+            seq_ids = ["sid_x"]
+
+            # mean exists, weighted missing for T5
+            for root in ["prot_t5_layer_19", "prot_t5_last"]:
+                _touch(media / "sequence_info" / root / "mean_vecs" / "sid_x.npy")
+            for root in ["esm2_layer_26", "esm2_layer_29", "esmc_layer_24", "esmc_layer_32"]:
+                _touch(media / "sequence_info" / root / "mean_vecs" / "sid_x.npy")
+                _touch(media / "sequence_info" / root / "weighted_vecs" / "sid_x.npy")
+            bs_path = media / "pseq2sites" / "binding_sites_all.tsv"
+            bs_path.parent.mkdir(parents=True, exist_ok=True)
+            bs_path.write_text("PDB\tscore\nsid_x\t0.5\n", encoding="utf-8")
+
+            with patch.object(eps, "resolve_media_and_tools", return_value=(media, tools)):
+                with patch.object(eps, "resolve_seq_ids_via_cli", return_value=seq_ids):
+                    plan = eps.build_embedding_plan(
+                        method_key="KinForm-H",
+                        target="kcat",
+                        sequences=["MSEQ"],
+                        env={},
+                    )
+
+            by_step = {s.step_key: set(s.missing_seq_ids) for s in plan.step_plans}
+            self.assertIn("sid_x", by_step["kinform_t5_full"])
+
+    def test_kinform_all_complete_no_t5_full(self):
+        """All T5 + binding sites present → kinform_t5_full has no seq_ids."""
+        with tempfile.TemporaryDirectory(prefix="emb_plan_kinform_full_") as tmp:
+            tmp_path = Path(tmp)
+            media = tmp_path / "media"
+            tools = tmp_path / "tools"
+            seq_ids = ["sid_z"]
+
+            for root in ["prot_t5_layer_19", "prot_t5_last",
+                         "esm2_layer_26", "esm2_layer_29",
+                         "esmc_layer_24", "esmc_layer_32"]:
+                _touch(media / "sequence_info" / root / "mean_vecs" / "sid_z.npy")
+                _touch(media / "sequence_info" / root / "weighted_vecs" / "sid_z.npy")
+            bs_path = media / "pseq2sites" / "binding_sites_all.tsv"
+            bs_path.parent.mkdir(parents=True, exist_ok=True)
+            bs_path.write_text("PDB\tscore\nsid_z\t0.8\n", encoding="utf-8")
+
+            with patch.object(eps, "resolve_media_and_tools", return_value=(media, tools)):
+                with patch.object(eps, "resolve_seq_ids_via_cli", return_value=seq_ids):
+                    plan = eps.build_embedding_plan(
+                        method_key="KinForm-H",
+                        target="kcat",
+                        sequences=["MSEQ"],
+                        env={},
+                    )
+
+            self.assertEqual(plan.need_computation, 0)
+            self.assertEqual(eps.gpu_step_work(plan), {})
 
     def test_catapro_reuses_prott5_cache(self):
         with tempfile.TemporaryDirectory(prefix="emb_plan_catapro_") as tmp:

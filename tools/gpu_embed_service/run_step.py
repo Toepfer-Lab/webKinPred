@@ -15,12 +15,14 @@ from pathlib import Path
 
 
 STEP_CHOICES = (
-    "kinform_pseq2sites",
+    "kinform_t5_full",
     "kinform_esm2_layers",
     "kinform_esmc_layers",
-    "kinform_prott5_layers",
     "prot_t5_mean",
     "turnup_esm1b",
+    # Deprecated: superseded by kinform_t5_full
+    "kinform_pseq2sites",
+    "kinform_prott5_layers",
 )
 
 
@@ -216,6 +218,42 @@ def _run_kinform_t5(
     _run(cmd, env)
 
 
+def _run_kinform_t5_full(
+    env: dict[str, str],
+    seq_file: Path,
+    id_to_seq_pkl: Path,
+    seq_map_json: Path,
+) -> None:
+    """Single T5 load: residue → binding sites → mean+weighted (Smart Reuse)."""
+    script = (
+        Path(env["GPU_REPO_ROOT"]) / "models" / "KinForm" / "code" / "protein_embeddings" / "t5_embeddings.py"
+    ).resolve()
+    bs_pred = (Path(env["KINFORM_MEDIA_PATH"]) / "pseq2sites" / "binding_sites_all.tsv").resolve()
+    base_cmd = [
+        env["KINFORM_T5_PATH"],
+        str(script),
+        "--seq_file", str(seq_file),
+        "--id_to_seq_file", str(id_to_seq_pkl),
+        "--batch_size", "1",
+    ]
+
+    # Phase 1: extract residue for layers 19 + last in one model load + forward pass
+    _run(base_cmd + ["--setting", "residue", "--layers", "19", "None"], env)
+
+    # Phase 2: predict binding sites — last-layer residue is already on disk, T5 is a no-op
+    _run_kinform_pseq2sites(env, seq_map_json)
+
+    # Phase 3: derive mean+weighted from saved residue (Smart Reuse, no T5 reload)
+    _run(
+        base_cmd + [
+            "--setting", "mean+weighted",
+            "--weights_file", str(bs_pred),
+            "--layers", "19", "None",
+        ],
+        env,
+    )
+
+
 def _run_turnup(env: dict[str, str], seq_map_json: Path) -> None:
     turnup_env = dict(env)
     turnup_env.setdefault("TURNUP_MEDIA_PATH", env["KINFORM_MEDIA_PATH"])
@@ -229,19 +267,43 @@ def _run_turnup(env: dict[str, str], seq_map_json: Path) -> None:
         or os.environ.get("KINFORM_ESM_PATH")
         or _python_in_home_env("esm")
     )
+    # seq_map_json is {seq_id: sequence} — use seq_ids directly, no seqmap CLI needed.
     code = r"""
-import json
-import os
-import sys
+import json, os, sys
+import numpy as np
 from pathlib import Path
+import torch
 
-repo_root = Path(os.environ["GPU_REPO_ROOT"]).resolve()
-sys.path.insert(0, str(repo_root / "models" / "TurNup" / "code"))
-from enzyme_representations import calcualte_esm1b_ts_vectors
+seq_map = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))  # {seq_id: sequence}
 
-seq_map = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-seqs = list(dict.fromkeys(seq_map.values()))
-calcualte_esm1b_ts_vectors(seqs)
+media = os.environ.get("TURNUP_MEDIA_PATH") or os.environ.get("KINFORM_MEDIA_PATH")
+vec_dir = Path(media) / "sequence_info" / "esm1b_turnup"
+vec_dir.mkdir(parents=True, exist_ok=True)
+
+missing = {sid: seq for sid, seq in seq_map.items() if not (vec_dir / f"{sid}.npy").exists()}
+if not missing:
+    print("All TurNup ESM1b embeddings already on disk — skipping model load.")
+    sys.exit(0)
+
+print(f"Loading ESM1b for {len(missing)} sequence(s)...")
+import esm
+model, alphabet = esm.pretrained.esm1b_t33_650M_UR50S()
+batch_converter = alphabet.get_batch_converter()
+model.eval()
+if torch.cuda.is_available():
+    model = model.cuda()
+
+for sid, seq in missing.items():
+    seq_t = seq[:1022]  # ESM1b token limit
+    _, _, tokens = batch_converter([(sid, seq_t)])
+    if torch.cuda.is_available():
+        tokens = tokens.cuda()
+    with torch.no_grad():
+        out = model(tokens, repr_layers=[33], return_contacts=False)
+    rep = out["representations"][33][0, 0].cpu().numpy()
+    np.save(vec_dir / f"{sid}.npy", rep)
+
+print(f"Saved {len(missing)} TurNup ESM1b embedding(s).")
 """
     _run([turnup_python, "-c", code, str(seq_map_json)], turnup_env)
 
@@ -271,18 +333,20 @@ def run_step(
     env = _kinform_env(repo_root=repo_root, media_path=media_path, tools_path=tools_path)
 
     try:
-        if step == "kinform_pseq2sites":
-            _run_kinform_pseq2sites(env, seq_map_json)
+        if step == "kinform_t5_full":
+            _run_kinform_t5_full(env, seq_file, id_to_seq_pkl, seq_map_json)
         elif step == "kinform_esm2_layers":
             _run_kinform_esm2(env, seq_file, id_to_seq_pkl)
         elif step == "kinform_esmc_layers":
             _run_kinform_esmc(env, seq_file, id_to_seq_pkl)
-        elif step == "kinform_prott5_layers":
-            _run_kinform_t5(env, seq_file, id_to_seq_pkl, mean_only=False)
         elif step == "prot_t5_mean":
             _run_kinform_t5(env, seq_file, id_to_seq_pkl, mean_only=True)
         elif step == "turnup_esm1b":
             _run_turnup(env, seq_map_json)
+        elif step == "kinform_pseq2sites":
+            _run_kinform_pseq2sites(env, seq_map_json)
+        elif step == "kinform_prott5_layers":
+            _run_kinform_t5(env, seq_file, id_to_seq_pkl, mean_only=False)
         else:
             raise RuntimeError(f"Unsupported step: {step}")
     finally:

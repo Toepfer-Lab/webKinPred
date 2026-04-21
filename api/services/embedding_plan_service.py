@@ -362,21 +362,25 @@ def _step_plans_for_profile(
             for sid in seq_ids
         }
 
-        # Pseq2Sites writes/updates one shared TSV, so missing-ness is determined
-        # by presence of each sequence ID inside that table rather than per-seq file.
+        # kinform_t5_full covers: binding site prediction + T5 mean + T5 weighted.
+        # It must run first so ESM2/ESMC weighted steps have binding sites available.
         bs_pred_path = media_path / "pseq2sites" / "binding_sites_all.tsv"
         seen_ids = _load_binding_site_ids(bs_pred_path)
-        missing_bs = [sid for sid in seq_ids if sid not in seen_ids]
+        missing_bs = {sid for sid in seq_ids if sid not in seen_ids}
+        missing_t5 = {
+            sid for sid, paths in prott5_paths.items()
+            if any(not Path(p).exists() for p in paths)
+        }
+        t5_full_sids = sorted(missing_bs | missing_t5)
 
         return [
             EmbeddingStepPlan(
-                step_key="kinform_pseq2sites",
-                missing_seq_ids=missing_bs,
-                required_paths_by_seq={sid: set() for sid in seq_ids},
+                step_key="kinform_t5_full",
+                missing_seq_ids=t5_full_sids,
+                required_paths_by_seq={sid: prott5_paths[sid] for sid in t5_full_sids},
             ),
             _step_from_paths("kinform_esm2_layers", esm2_paths),
             _step_from_paths("kinform_esmc_layers", esmc_paths),
-            _step_from_paths("kinform_prott5_layers", prott5_paths),
         ]
 
     return []

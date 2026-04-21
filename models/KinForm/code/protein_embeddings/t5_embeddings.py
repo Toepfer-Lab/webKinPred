@@ -214,7 +214,7 @@ def get_prot_t5_embeddings(
     # ─────────────────────────────────────────────────────────────────────── #
 
     # --------------------------- model load ------------------------------- #
-    print("Loading ProtT5-XL UniRef50 ...")
+    print(f"Loading ProtT5-XL UniRef50 from {PROTT5XL_MODEL_PATH} ...")
     local_only = bool(os.environ.get("KINFORM_MEDIA_PATH"))
     tokenizer = T5Tokenizer.from_pretrained(
         PROTT5XL_MODEL_PATH,
@@ -371,7 +371,7 @@ def _get_prot_t5_residue_multi_layer(
         return
 
     # ── single model load ──────────────────────────────────────────────────
-    print("Loading ProtT5-XL UniRef50 ...")
+    print(f"Loading ProtT5-XL UniRef50 from {PROTT5XL_MODEL_PATH}...")
     local_only = bool(os.environ.get("KINFORM_MEDIA_PATH"))
     tokenizer = T5Tokenizer.from_pretrained(
         PROTT5XL_MODEL_PATH,
