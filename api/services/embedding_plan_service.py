@@ -168,6 +168,9 @@ def expected_paths_by_seq(
         return out
 
     if method_key == "EITLEM":
+        # Full per-residue ESM1v matrices.  These are ephemeral: written by the
+        # GPU step (or CPU fallback inside the prediction script) and deleted by
+        # the prediction script after all predictions are complete.
         base = media_path / "sequence_info" / "esm1v"
         for seq_id in seq_ids:
             out[seq_id] = {str((base / f"{seq_id}.npy").resolve())}
@@ -308,9 +311,9 @@ def _profile_for_method(method_key: str) -> tuple[str | None, bool, str | None]:
     if method_key == "TurNup":
         return "turnup_esm1b", True, None
     if method_key == "EITLEM":
-        return None, False, "gpu_offload_unsupported_full_matrix_artifacts"
+        return "eitlem_esm1v", True, None
     if method_key == "CatPred":
-        return None, False, "gpu_offload_phase2"
+        return "catpred_embed", True, None
     return None, False, "gpu_offload_not_applicable"
 
 
@@ -318,9 +321,23 @@ def _step_plans_for_profile(
     *,
     profile: str | None,
     method_key: str,
+    target: str,
     seq_ids: list[str],
     media_path: Path,
+    full_expected_paths: dict[str, set[str]] | None = None,
 ) -> list[EmbeddingStepPlan]:
+    if profile == "eitlem_esm1v":
+        base = media_path / "sequence_info" / "esm1v"
+        paths = {sid: {str((base / f"{sid}.npy").resolve())} for sid in seq_ids}
+        return [_step_from_paths("eitlem_esm1v", paths)]
+
+    if profile == "catpred_embed":
+        parameter = _catpred_parameter(target)
+        if parameter is None or not full_expected_paths:
+            return []
+        step_key = f"catpred_embed_{parameter}"
+        return [_step_from_paths(step_key, full_expected_paths)]
+
     if profile == "prot_t5_mean":
         base = media_path / "sequence_info" / "prot_t5_last" / "mean_vecs"
         paths = {sid: {str((base / f"{sid}.npy").resolve())} for sid in seq_ids}
@@ -423,8 +440,10 @@ def build_embedding_plan(
     step_plans = _step_plans_for_profile(
         profile=profile,
         method_key=method_key,
+        target=target,
         seq_ids=seq_ids,
         media_path=media_path,
+        full_expected_paths=expected,
     )
 
     return EmbeddingPlan(

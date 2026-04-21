@@ -20,6 +20,9 @@ STEP_CHOICES = (
     "kinform_esmc_layers",
     "prot_t5_mean",
     "turnup_esm1b",
+    "eitlem_esm1v",
+    "catpred_embed_kcat",
+    "catpred_embed_km",
     # Deprecated: superseded by kinform_t5_full
     "kinform_pseq2sites",
     "kinform_prott5_layers",
@@ -308,6 +311,139 @@ print(f"Saved {len(missing)} TurNup ESM1b embedding(s).")
     _run([turnup_python, "-c", code, str(seq_map_json)], turnup_env)
 
 
+def _run_eitlem_esm1v(env: dict[str, str], seq_map_json: Path) -> None:
+    """Compute ESM1v layer-33 per-residue representations for EITLEM on GPU.
+
+    Saves the full residue matrix (seq_len × 1280, float32) to
+    <media>/sequence_info/esm1v/<seq_id>.npy — the same format and path
+    the EITLEM prediction script expects.  Files are ephemeral: the
+    prediction script deletes them after all predictions are complete.
+    """
+    eitlem_python = (
+        os.environ.get("EITLEM_EMBED_PYTHON")
+        or os.environ.get("KINFORM_ESM_PATH")  # esm conda env includes ESM1v
+        or _python_in_home_env("eitlem_env")
+    )
+    repo_root_str = env.get("GPU_REPO_ROOT", "")
+    code = r"""
+import json, os, sys
+import numpy as np
+from pathlib import Path
+import torch
+
+seq_map = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+
+media = os.environ.get("EITLEM_MEDIA_PATH") or os.environ.get("KINFORM_MEDIA_PATH")
+if not media:
+    raise RuntimeError("Neither EITLEM_MEDIA_PATH nor KINFORM_MEDIA_PATH is set.")
+
+emb_dir = Path(media) / "sequence_info" / "esm1v"
+emb_dir.mkdir(parents=True, exist_ok=True)
+
+missing = {sid: seq for sid, seq in seq_map.items()
+           if not (emb_dir / f"{sid}.npy").exists()}
+if not missing:
+    print(f"All {len(seq_map)} EITLEM ESM1v representation(s) already on disk — skipping.")
+    sys.exit(0)
+
+model_path = os.environ.get("EITLEM_MODEL_PATH")
+if not model_path:
+    repo_root = os.environ.get("GPU_REPO_ROOT", "")
+    if not repo_root:
+        raise RuntimeError(
+            "EITLEM_MODEL_PATH is not set and GPU_REPO_ROOT is unavailable to derive it."
+        )
+    model_path = str(
+        (Path(repo_root) / "models" / "EITLEM" / "Weights" / "esm1v"
+         / "esm1v_t33_650M_UR90S_1.pt").resolve()
+    )
+
+print(f"Loading ESM1v 650M for {len(missing)} sequence(s) from {model_path} ...")
+import esm as esm_lib
+esm_model, alphabet = esm_lib.pretrained.load_model_and_alphabet_local(model_path)
+batch_converter = alphabet.get_batch_converter()
+esm_model.eval()
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+esm_model = esm_model.to(device)
+print(f"ESM1v running on {device}.")
+
+for sid, seq in missing.items():
+    # ESM1v max context is 1024 tokens (incl. <cls>/<eos>) → seq ≤ 1022.
+    if len(seq) > 1022:
+        seq = seq[:500] + seq[-500:]
+
+    _, _, batch_tokens = batch_converter([("protein", seq)])
+    batch_lens = (batch_tokens != alphabet.padding_idx).sum(1)
+    batch_tokens = batch_tokens.to(device)
+
+    with torch.no_grad():
+        results = esm_model(batch_tokens, repr_layers=[33], return_contacts=False)
+
+    token_repr = results["representations"][33]
+    tokens_len = batch_lens[0]
+    # Strip <cls> (position 0) and <eos> (position tokens_len-1).
+    # Shape: (seq_len, 1280) — full per-residue matrix, as the EITLEM model requires.
+    residue_repr = token_repr[0, 1 : tokens_len - 1].cpu().numpy()
+    np.save(emb_dir / f"{sid}.npy", residue_repr)
+
+print(f"Saved {len(missing)} EITLEM ESM1v representation(s) to {emb_dir}.")
+"""
+    eitlem_env = dict(env)
+    eitlem_env.setdefault("GPU_REPO_ROOT", repo_root_str)
+    _run([eitlem_python, "-c", code, str(seq_map_json)], eitlem_env)
+
+
+def _run_catpred_embed(parameter: str, env: dict[str, str], seq_map_json: Path) -> None:
+    """Compute CatPred ESM2 + attention-pooled embeddings on GPU.
+
+    Calls the standalone catpred_embed_gpu.py script which handles ESM2
+    inference and per-checkpoint attentive pooling, saving pooled .pt tensors
+    to the shared cache so the production adapter can skip embedding entirely.
+    """
+    catpred_python = (
+        os.environ.get("CATPRED_EMBED_PYTHON")
+        or _python_in_home_env("catpred_env")
+    )
+    repo_root = Path(env.get("GPU_REPO_ROOT", str(_default_repo_root()))).resolve()
+    script = (
+        repo_root / "models" / "CatPred" / "catpred" / "integration" / "catpred_embed_gpu.py"
+    ).resolve()
+    _ensure_exists(script, "catpred_embed_gpu.py")
+
+    checkpoint_root = (
+        os.environ.get("CATPRED_CHECKPOINT_ROOT")
+        or str((repo_root / "models" / "CatPred" / ".e2e-assets" / "pretrained" / "production").resolve())
+    )
+    media_path = (
+        env.get("CATPRED_MEDIA_PATH")
+        or env.get("KINFORM_MEDIA_PATH")
+        or os.environ.get("CATPRED_MEDIA_PATH")
+        or os.environ.get("KINFORM_MEDIA_PATH", "")
+    )
+    cache_root = (
+        os.environ.get("CATPRED_CACHE_ROOT")
+        or (str((Path(media_path) / "sequence_info" / "catpred_esm2").resolve()) if media_path else "")
+    )
+    if not cache_root:
+        raise RuntimeError(
+            "Cannot determine CatPred cache root: set CATPRED_CACHE_ROOT or "
+            "CATPRED_MEDIA_PATH / KINFORM_MEDIA_PATH."
+        )
+
+    _run(
+        [
+            catpred_python,
+            str(script),
+            "--seq-id-to-seq-file", str(seq_map_json),
+            "--parameter", parameter,
+            "--checkpoint-root", checkpoint_root,
+            "--cache-root", cache_root,
+        ],
+        env,
+    )
+
+
 def run_step(
     step: str,
     seq_ids: list[str],
@@ -343,6 +479,12 @@ def run_step(
             _run_kinform_t5(env, seq_file, id_to_seq_pkl, mean_only=True)
         elif step == "turnup_esm1b":
             _run_turnup(env, seq_map_json)
+        elif step == "eitlem_esm1v":
+            _run_eitlem_esm1v(env, seq_map_json)
+        elif step == "catpred_embed_kcat":
+            _run_catpred_embed("kcat", env, seq_map_json)
+        elif step == "catpred_embed_km":
+            _run_catpred_embed("km", env, seq_map_json)
         elif step == "kinform_pseq2sites":
             _run_kinform_pseq2sites(env, seq_map_json)
         elif step == "kinform_prott5_layers":
