@@ -122,22 +122,11 @@ def _emb_path(seq_id: str) -> Path:
     return ESM_EMB_DIR / f"{seq_id}.npy"
 
 
-def _get_or_compute_repr(seq_id: str, sequence: str) -> np.ndarray:
-    """Return the per-residue ESM1v matrix for *seq_id*.
-
-    If the file was pre-computed by the GPU step it is loaded directly
-    (no model load required).  Otherwise the representation is computed on
-    CPU and saved to disk so the embedding-progress tracker can observe the
-    file creation event.
-    """
-    path = _emb_path(seq_id)
-    if path.exists():
-        return np.load(str(path))
-
-    ESM_EMB_DIR.mkdir(parents=True, exist_ok=True)
-    rep = _compute_residue_repr(sequence)
-    np.save(str(path), rep)
-    return rep
+def _free_esm() -> None:
+    global _esm_model, _alphabet, _batch_converter
+    _esm_model = None
+    _alphabet = None
+    _batch_converter = None
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -172,6 +161,19 @@ def main() -> None:
     )
     eitlem_model.eval()
 
+    # ── Phase 1: ensure all ESM1v embeddings are on disk ─────────────────────
+    # GPU case: files already written by the GPU server before this script runs.
+    # CPU fallback: compute them now with ESM1v loaded once, then free the model
+    # so it doesn't compete with the GNN for RAM during Phase 2.
+    ESM_EMB_DIR.mkdir(parents=True, exist_ok=True)
+    for seq_id, sequence in zip(seq_ids, sequences):
+        path = _emb_path(seq_id)
+        if not path.exists():
+            rep = _compute_residue_repr(sequence)
+            np.save(str(path), rep)
+    _free_esm()
+
+    # ── Phase 2: batched GNN inference, loading embeddings from disk ──────────
     _BATCH_SIZE = 32
     total = len(sequences)
     predictions: list[float | None] = [None] * total
@@ -197,8 +199,7 @@ def main() -> None:
                 raise ValueError(f"Invalid substrate SMILES: {substrate}")
 
             mol_feature = torch.FloatTensor(MACCSkeys.GenMACCSKeys(mol).ToList())
-            rep = _get_or_compute_repr(seq_id, sequence)
-            sequence_rep = torch.FloatTensor(rep)
+            sequence_rep = torch.FloatTensor(np.load(str(_emb_path(seq_id))))
 
             pending_indices.append(idx)
             pending_data.append(Data(x=mol_feature.unsqueeze(0), pro_emb=sequence_rep))
