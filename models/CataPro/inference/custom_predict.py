@@ -351,9 +351,9 @@ def run_catapro(
     dataloader = DataLoader(FeatureDataset(feats), batch_size=32, shuffle=False)
     total_predictions = int(feats.shape[0])
 
+    _SUBDIR = {"KCAT": "kcat_models", "KM": "Km_models", "KCAT/KM": "act_models"}
     fold_models = []
-    _, subdir = _build_model(kinetics_type, device)
-    model_dir = model_root / "models" / subdir
+    model_dir = model_root / "models" / _SUBDIR[kinetics_type]
     if not model_dir.exists():
         raise RuntimeError(f"CataPro model directory not found: {model_dir}")
 
