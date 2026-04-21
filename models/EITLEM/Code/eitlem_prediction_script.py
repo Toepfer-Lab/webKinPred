@@ -172,8 +172,23 @@ def main() -> None:
     )
     eitlem_model.eval()
 
-    predictions: list[float | None] = []
+    _BATCH_SIZE = 32
     total = len(sequences)
+    predictions: list[float | None] = [None] * total
+
+    pending_indices: list[int] = []
+    pending_data:    list[Data] = []
+
+    def _flush_batch() -> None:
+        if not pending_indices:
+            return
+        batch = Batch.from_data_list(pending_data, follow_batch=["pro_emb"])
+        with torch.no_grad():
+            res = eitlem_model(batch)
+        for local_i, global_idx in enumerate(pending_indices):
+            predictions[global_idx] = math.pow(10, res[local_i].item())
+        pending_indices.clear()
+        pending_data.clear()
 
     for idx, (sequence, substrate, seq_id) in enumerate(zip(sequences, substrates, seq_ids)):
         try:
@@ -182,23 +197,21 @@ def main() -> None:
                 raise ValueError(f"Invalid substrate SMILES: {substrate}")
 
             mol_feature = torch.FloatTensor(MACCSkeys.GenMACCSKeys(mol).ToList())
-
-            # Full per-residue ESM1v matrix — shape (seq_len, 1280).
             rep = _get_or_compute_repr(seq_id, sequence)
             sequence_rep = torch.FloatTensor(rep)
 
-            sample = Data(x=mol_feature.unsqueeze(0), pro_emb=sequence_rep)
-            batch  = Batch.from_data_list([sample], follow_batch=["pro_emb"])
+            pending_indices.append(idx)
+            pending_data.append(Data(x=mol_feature.unsqueeze(0), pro_emb=sequence_rep))
 
-            with torch.no_grad():
-                res = eitlem_model(batch)
-            predictions.append(math.pow(10, res[0].item()))
+            if len(pending_indices) == _BATCH_SIZE:
+                _flush_batch()
 
         except Exception as exc:
             print(f"Error processing sample {idx}: {exc}")
-            predictions.append(None)
-        finally:
-            print(f"Progress: {idx + 1}/{total}", flush=True)
+
+        print(f"Progress: {idx + 1}/{total}", flush=True)
+
+    _flush_batch()
 
     # ── Cleanup ephemeral ESM1v files ─────────────────────────────────────────
     # Delete every esm1v file for sequences in this job — both files that were
