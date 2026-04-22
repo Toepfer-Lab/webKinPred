@@ -36,6 +36,10 @@ from KMP import EitlemKmPredictor
 
 _MEDIA_PATH = os.environ.get("EITLEM_MEDIA_PATH", "/home/saleh/webKinPred/media")
 _TOOLS_PATH = os.environ.get("EITLEM_TOOLS_PATH", "/home/saleh/webKinPred/tools")
+_DELETE_EMBEDDINGS_AFTER_RUN = (
+    str(os.environ.get("EITLEM_DELETE_EMBEDDINGS_AFTER_RUN", "1")).strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 
 ESM_EMB_DIR = Path(_MEDIA_PATH) / "sequence_info" / "esm1v"
 
@@ -215,14 +219,14 @@ def main() -> None:
     _flush_batch()
 
     # ── Cleanup ephemeral ESM1v files ─────────────────────────────────────────
-    # Delete every esm1v file for sequences in this job — both files that were
-    # pre-computed by the GPU step and any that this script computed on CPU.
-    # This keeps the esm1v/ directory free of stale data between jobs.
-    for seq_id in set(seq_ids):
-        try:
-            _emb_path(seq_id).unlink(missing_ok=True)
-        except OSError:
-            pass  # best-effort cleanup
+    # Delete every esm1v file for sequences in this job unless this run is
+    # asked to preserve embeddings for another target stage in the same job.
+    if _DELETE_EMBEDDINGS_AFTER_RUN:
+        for seq_id in set(seq_ids):
+            try:
+                _emb_path(seq_id).unlink(missing_ok=True)
+            except OSError:
+                pass  # best-effort cleanup
 
     # ── Write output CSV ──────────────────────────────────────────────────────
     pd.DataFrame(

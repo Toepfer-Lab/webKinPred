@@ -17,6 +17,13 @@ import gc
 from KCM import EitlemKcatPredictor
 from KMP import EitlemKmPredictor
 
+
+def _env_bool(name, default=True):
+    raw = str(os.environ.get(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
 # Use environment variables if available, otherwise fall back to hardcoded paths
 ESM_EMB_DIR = (
     os.environ.get("EITLEM_MEDIA_PATH", "/home/saleh/webKinPred/media")
@@ -60,6 +67,7 @@ def resolve_seq_ids_via_cli(sequences):
 
 
 os.makedirs(ESM_EMB_DIR, exist_ok=True)
+DELETE_EMBEDDINGS_AFTER_RUN = _env_bool("EITLEM_DELETE_EMBEDDINGS_AFTER_RUN", default=True)
 
 
 def _torch_load_compat(path, map_location=None):
@@ -97,6 +105,11 @@ def get_sequence_embedding(sequence, seq_id, esm_model, batch_converter, alphabe
     if os.path.exists(vec_path):
         return np.load(vec_path)
 
+    if esm_model is None or batch_converter is None or alphabet is None:
+        raise RuntimeError(
+            f"Missing ESM1v cache file for seq_id={seq_id} and ESM model is not loaded."
+        )
+
     # Generate embedding - handle long sequences like the original script
     sequence_for_embedding = sequence
     if len(sequence_for_embedding) > 1023:
@@ -118,6 +131,8 @@ def get_sequence_embedding(sequence, seq_id, esm_model, batch_converter, alphabe
 
 
 def main():
+    seq_ids = []
+    run_completed = False
     if len(sys.argv) != 4:
         print(
             "Usage: python eitlem_prediction_script_batch.py input_file.csv output_file.csv kinetics_type"
@@ -132,99 +147,115 @@ def main():
     sequences = df_input["Protein Sequence"].tolist()
     substrates = df_input["Substrate SMILES"].tolist()
 
-    # Resolve all IDs up-front (counts per occurrence, duplicates included)
-    seq_ids = resolve_seq_ids_via_cli(sequences)
+    try:
+        # Resolve all IDs up-front (counts per occurrence, duplicates included)
+        seq_ids = resolve_seq_ids_via_cli(sequences)
 
-    # Define paths to model weights based on environment variables
-    if os.environ.get("EITLEM_MEDIA_PATH"):
-        # Docker environment
-        modelPath = {
-            "KCAT": "/app/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
-            "KM": "/app/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
-        }
-    else:
-        # Local environment
-        modelPath = {
-            "KCAT": "/home/saleh/webKinPred/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
-            "KM": "/home/saleh/webKinPred/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
-        }
+        # Define paths to model weights based on environment variables
+        if os.environ.get("EITLEM_MEDIA_PATH"):
+            # Docker environment
+            modelPath = {
+                "KCAT": "/app/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
+                "KM": "/app/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
+            }
+        else:
+            # Local environment
+            modelPath = {
+                "KCAT": "/home/saleh/webKinPred/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
+                "KM": "/home/saleh/webKinPred/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
+            }
 
-    if kinetics_type not in modelPath:
-        print(f"Invalid kinetics type: {kinetics_type}")
-        sys.exit(1)
+        if kinetics_type not in modelPath:
+            print(f"Invalid kinetics type: {kinetics_type}")
+            sys.exit(1)
 
-    # Load EITLEM model
-    if kinetics_type == "KCAT":
-        eitlem_model = EitlemKcatPredictor(167, 512, 1280, 10, 0.5, 10)
-    elif kinetics_type == "KM":
-        eitlem_model = EitlemKmPredictor(167, 512, 1280, 10, 0.5, 10)
+        # Load EITLEM model
+        if kinetics_type == "KCAT":
+            eitlem_model = EitlemKcatPredictor(167, 512, 1280, 10, 0.5, 10)
+        elif kinetics_type == "KM":
+            eitlem_model = EitlemKmPredictor(167, 512, 1280, 10, 0.5, 10)
 
-    eitlem_model.load_state_dict(
-        _torch_load_compat(modelPath[kinetics_type], map_location=torch.device("cpu"))
-    )
-    eitlem_model.eval()
+        eitlem_model.load_state_dict(
+            _torch_load_compat(modelPath[kinetics_type], map_location=torch.device("cpu"))
+        )
+        eitlem_model.eval()
 
-    # Load ESM model once
-    esm_model, alphabet, batch_converter = load_esm_model()
+        unique_seq_ids = set(seq_ids)
+        needs_esm = any(
+            not os.path.exists(os.path.join(ESM_EMB_DIR, f"{seq_id}.npy"))
+            for seq_id in unique_seq_ids
+        )
+        if needs_esm:
+            esm_model, alphabet, batch_converter = load_esm_model()
+        else:
+            print("All EITLEM ESM1v embeddings already on disk, skipping ESM model load.")
+            esm_model, alphabet, batch_converter = None, None, None
 
-    predictions = []
-    total_predictions = len(sequences)
+        predictions = []
+        total_predictions = len(sequences)
 
-    # Process predictions one by one
-    for idx, (sequence, substrate, seq_id) in enumerate(
-        zip(sequences, substrates, seq_ids)
-    ):
-        try:
-            print(f"Progress: {idx+1}/{total_predictions} predictions made", flush=True)
+        # Process predictions one by one
+        for idx, (sequence, substrate, seq_id) in enumerate(
+            zip(sequences, substrates, seq_ids)
+        ):
+            try:
+                print(f"Progress: {idx+1}/{total_predictions} predictions made", flush=True)
 
-            # Convert substrate SMILES to molecule
-            mol = Chem.MolFromSmiles(substrate)
-            if mol is None:
-                raise ValueError(f"Invalid substrate SMILES: {substrate}")
+                # Convert substrate SMILES to molecule
+                mol = Chem.MolFromSmiles(substrate)
+                if mol is None:
+                    raise ValueError(f"Invalid substrate SMILES: {substrate}")
 
-            # Compute MACCS Keys
-            mol_feature = MACCSkeys.GenMACCSKeys(mol).ToList()
+                # Compute MACCS Keys
+                mol_feature = MACCSkeys.GenMACCSKeys(mol).ToList()
 
-            # Get sequence embedding
-            rep = get_sequence_embedding(
-                sequence, seq_id, esm_model, batch_converter, alphabet
-            )
+                # Get sequence embedding
+                rep = get_sequence_embedding(
+                    sequence, seq_id, esm_model, batch_converter, alphabet
+                )
 
-            # Use mean of per-residue embedding
-            sequence_rep = torch.FloatTensor(rep)
-            sample = Data(
-                x=torch.FloatTensor(mol_feature).unsqueeze(0), pro_emb=sequence_rep
-            )
+                sequence_rep = torch.FloatTensor(rep)
+                sample = Data(
+                    x=torch.FloatTensor(mol_feature).unsqueeze(0), pro_emb=sequence_rep
+                )
 
-            input_data = Batch.from_data_list([sample], follow_batch=["pro_emb"])
+                input_data = Batch.from_data_list([sample], follow_batch=["pro_emb"])
 
-            # Predict kinetics value
-            with torch.no_grad():
-                res = eitlem_model(input_data)
-            prediction = math.pow(10, res[0].item())
-            predictions.append(prediction)
+                # Predict kinetics value
+                with torch.no_grad():
+                    res = eitlem_model(input_data)
+                prediction = math.pow(10, res[0].item())
+                predictions.append(prediction)
 
-            # Clean up memory
-            del mol_feature, rep, sequence_rep, sample, input_data, res
+                # Clean up memory
+                del mol_feature, rep, sequence_rep, sample, input_data, res
+                gc.collect()
+
+            except Exception as e:
+                print(f"Error processing sample {idx}: {e}")
+                predictions.append(None)  # Use None for failed predictions
+
+        if needs_esm:
+            del esm_model, alphabet, batch_converter
             gc.collect()
 
-        except Exception as e:
-            print(f"Error processing sample {idx}: {e}")
-            predictions.append(None)  # Use None for failed predictions
-
-    # Clean up ESM model
-    del esm_model, alphabet, batch_converter
-    gc.collect()
-
-    # Save predictions to output file
-    df_output = pd.DataFrame(
-        {
-            "Substrate SMILES": substrates,
-            "Protein Sequence": sequences,
-            "Predicted Value": predictions,
-        }
-    )
-    df_output.to_csv(output_file, index=False)
+        # Save predictions to output file
+        df_output = pd.DataFrame(
+            {
+                "Substrate SMILES": substrates,
+                "Protein Sequence": sequences,
+                "Predicted Value": predictions,
+            }
+        )
+        df_output.to_csv(output_file, index=False)
+        run_completed = True
+    finally:
+        if DELETE_EMBEDDINGS_AFTER_RUN or not run_completed:
+            for seq_id in set(seq_ids):
+                try:
+                    os.remove(os.path.join(ESM_EMB_DIR, f"{seq_id}.npy"))
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

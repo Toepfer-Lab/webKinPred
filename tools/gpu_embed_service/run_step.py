@@ -227,7 +227,13 @@ def _run_kinform_t5_full(
     id_to_seq_pkl: Path,
     seq_map_json: Path,
 ) -> None:
-    """Single T5 load: residue → binding sites → mean+weighted (Smart Reuse)."""
+    """Single T5 load path with early progress-visible cache writes.
+
+    Flow:
+    1) residue+mean for layers 19 + last (single model load)
+    2) binding-site prediction from saved last-layer residue
+    3) weighted vectors derived from residue files (no T5 reload)
+    """
     script = (
         Path(env["GPU_REPO_ROOT"]) / "models" / "KinForm" / "code" / "protein_embeddings" / "t5_embeddings.py"
     ).resolve()
@@ -240,16 +246,18 @@ def _run_kinform_t5_full(
         "--batch_size", "1",
     ]
 
-    # Phase 1: extract residue for layers 19 + last in one model load + forward pass
-    _run(base_cmd + ["--setting", "residue", "--layers", "19", "None"], env)
+    # Phase 1: extract residue + mean for layers 19 + last in one model load.
+    # Writing mean_vecs here lets embedding_progress track real progress while
+    # weighted vectors wait for binding-site prediction.
+    _run(base_cmd + ["--setting", "residue+mean", "--layers", "19", "None"], env)
 
     # Phase 2: predict binding sites — last-layer residue is already on disk, T5 is a no-op
     _run_kinform_pseq2sites(env, seq_map_json)
 
-    # Phase 3: derive mean+weighted from saved residue (Smart Reuse, no T5 reload)
+    # Phase 3: derive weighted from saved residue (Smart Reuse, no T5 reload).
     _run(
         base_cmd + [
-            "--setting", "mean+weighted",
+            "--setting", "weighted",
             "--weights_file", str(bs_pred),
             "--layers", "19", "None",
         ],
