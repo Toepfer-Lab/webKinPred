@@ -13,7 +13,6 @@ scipy
 timm 
 tqdm 
 yacs 
-rdkit 
 fair-esm 
 transformers 
 
