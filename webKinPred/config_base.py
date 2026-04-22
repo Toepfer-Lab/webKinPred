@@ -21,6 +21,7 @@ _DATA_PATH_REL = {
     "CataPro": "models/CataPro",
     "KinForm": "models/KinForm/results",
     "MMISA-KM": "models/MMISA-KM",
+    "OmniESI": "models/OmniESI/code",
     "media": "media",
     "tools": "tools",
 }
@@ -35,6 +36,7 @@ _PREDICTION_SCRIPT_REL = {
     "CataPro": "models/CataPro/inference/custom_predict.py",
     "KinForm": "models/KinForm/code/main.py",
     "MMISA-KM": "models/MMISA-KM/upstream/script/prediction_script.py",
+    "OmniESI": "models/OmniESI/batch_predict.py",
 }
 
 
