@@ -400,8 +400,18 @@ class ResidueCache:
         return tensor
 
     def get_numpy(self, key: ResidueKey) -> np.ndarray:
-        tensor = self.get_tensor(key)
-        return tensor.detach().cpu().numpy().astype(np.float32, copy=False)
+        entry = self.entries.get(key)
+        if entry is None:
+            raise KeyError(key)
+        self.entries.move_to_end(key)
+
+        if entry.tensor is not None:
+            return entry.tensor.detach().cpu().numpy().astype(np.float32, copy=False)
+
+        if entry.spill_path is not None and entry.spill_path.exists():
+            return np.load(entry.spill_path).astype(np.float32, copy=False)
+
+        raise RuntimeError(f"Residue key={key} has no in-memory tensor and missing spill file.")
 
     def remove(self, key: ResidueKey) -> None:
         entry = self.entries.pop(key, None)

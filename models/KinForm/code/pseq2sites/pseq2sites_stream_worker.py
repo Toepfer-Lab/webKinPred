@@ -5,8 +5,10 @@ import argparse
 import csv
 import json
 import os
+import queue
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -281,8 +283,67 @@ def _run_stream_mode(
         return 0
 
     print(f"PSEQ_STREAM pending_count={len(pending)}")
+
+    queue_size_raw = str(os.environ.get("KINFORM_PARALLEL_PSEQ_STREAM_QUEUE_SIZE", "")).strip()
+    if queue_size_raw:
+        try:
+            queue_size = max(4, int(queue_size_raw))
+        except Exception:
+            queue_size = max(32, int(batch_size) * 8)
+    else:
+        queue_size = max(32, int(batch_size) * 8)
+
+    recv_queue: queue.Queue = queue.Queue(maxsize=queue_size)
+    recv_stop = threading.Event()
+    receiver_exc: list[str] = []
+
+    def _queue_put(item) -> None:
+        while not recv_stop.is_set():
+            try:
+                recv_queue.put(item, timeout=0.2)
+                return
+            except queue.Full:
+                continue
+
+    def _receiver_loop() -> None:
+        try:
+            while not recv_stop.is_set():
+                try:
+                    header, payload = stream.recv(timeout_seconds=0.2)
+                except TimeoutError:
+                    continue
+                except EOFError:
+                    _queue_put(("finish", "", "", None))
+                    return
+
+                evt_type = str(header.get("type", "")).strip().upper()
+                if evt_type == "PSEQ_RESIDUE":
+                    seq_id = str(header.get("seq_id", "")).strip()
+                    if not seq_id:
+                        continue
+                    sequence = str(header.get("sequence", ""))
+                    arr = _decode_array_payload(header, payload)
+                    _queue_put(("residue", seq_id, sequence, arr))
+                    continue
+                if evt_type == "PSEQ_FINISH":
+                    _queue_put(("finish", "", "", None))
+                    return
+        except Exception as exc:
+            receiver_exc.append(str(exc))
+            _queue_put(("error", "", "", str(exc)))
+
+    receiver_thread = threading.Thread(
+        target=_receiver_loop,
+        name=f"{worker_name}-stream-recv",
+        daemon=True,
+    )
+    receiver_thread.start()
+
     buffer_feats: dict[str, np.ndarray] = {}
     buffer_seqs: dict[str, str] = {}
+    finish_received = False
+    last_buffer_add = time.monotonic()
+    idle_flush_seconds = max(0.05, float(os.environ.get("KINFORM_PARALLEL_PSEQ_STREAM_IDLE_FLUSH_SECONDS", "0.2")))
 
     def flush_buffer() -> int:
         nonlocal buffer_feats, buffer_seqs
@@ -320,27 +381,64 @@ def _run_stream_mode(
         print(f"PSEQ_STREAM wrote={wrote} remaining={len(pending)} cache={binding_sites_path}")
         return wrote
 
+    def handle_queue_item(item) -> None:
+        nonlocal finish_received, last_buffer_add
+        kind, seq_id, sequence, payload_obj = item
+        if kind == "residue":
+            if seq_id not in pending:
+                return
+            if not isinstance(payload_obj, np.ndarray):
+                raise RuntimeError(f"Invalid residue payload for seq_id={seq_id}")
+            buffer_feats[seq_id] = payload_obj
+            buffer_seqs[seq_id] = sequence or pending[seq_id]
+            last_buffer_add = time.monotonic()
+            return
+        if kind == "finish":
+            finish_received = True
+            return
+        if kind == "error":
+            raise RuntimeError(f"Pseq stream receiver failed: {payload_obj}")
+        raise RuntimeError(f"Unknown receiver queue item kind={kind}")
+
     try:
         while pending:
+            got_data = False
             try:
-                header, payload = stream.recv(timeout_seconds=0.2)
-            except TimeoutError:
-                flush_buffer()
-                continue
-            evt_type = str(header.get("type", "")).strip().upper()
-            if evt_type == "PSEQ_RESIDUE":
-                seq_id = str(header.get("seq_id", "")).strip()
-                if not seq_id or seq_id not in pending:
-                    continue
-                arr = _decode_array_payload(header, payload)
-                buffer_feats[seq_id] = arr
-                buffer_seqs[seq_id] = str(header.get("sequence", pending[seq_id]))
+                item = recv_queue.get(timeout=0.2)
+                handle_queue_item(item)
+                got_data = True
+            except queue.Empty:
+                pass
+
+            # Drain available queue items quickly to keep socket backpressure low.
+            while True:
+                try:
+                    item = recv_queue.get_nowait()
+                except queue.Empty:
+                    break
+                handle_queue_item(item)
+                got_data = True
                 if len(buffer_feats) >= max(1, int(batch_size)):
-                    flush_buffer()
+                    break
+
+            if receiver_exc:
+                raise RuntimeError(f"Pseq stream receiver thread error: {receiver_exc[-1]}")
+
+            if len(buffer_feats) >= max(1, int(batch_size)):
+                flush_buffer()
                 continue
 
-            if evt_type == "PSEQ_FINISH":
+            if buffer_feats and (
+                finish_received
+                or (
+                    (not got_data)
+                    and (time.monotonic() - last_buffer_add >= idle_flush_seconds)
+                )
+            ):
                 flush_buffer()
+                continue
+
+            if finish_received and not buffer_feats:
                 if pending:
                     missing = sorted(pending.keys())
                     raise RuntimeError(f"Received PSEQ_FINISH with pending sequence IDs: {missing}")
@@ -371,6 +469,9 @@ def _run_stream_mode(
             pass
         raise
     finally:
+        recv_stop.set()
+        if receiver_thread.is_alive():
+            receiver_thread.join(timeout=1.0)
         stream.close()
 
 
