@@ -1,36 +1,35 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
+import { Container, Row, Col } from 'react-bootstrap';
 import {
-  Form,
-  Container,
-  Row,
-  Col,
-  Card,
-  Alert,
-  ProgressBar,
-  Spinner,
-  Button,
-  Badge
-} from 'react-bootstrap';
-import {
-  HourglassSplit,
-  CheckCircle,
-  XCircle,
-  ExclamationTriangle,
+  CheckCircleFill,
+  XCircleFill,
+  ExclamationTriangleFill,
   Clipboard,
   ClipboardCheck,
   ArrowClockwise,
-  FileEarmarkArrowDown,
-  Stopwatch,
-  Database,
-  Cpu,
-  GraphUp
+  CloudArrowDown,
 } from 'react-bootstrap-icons';
 import moment from 'moment';
 import ExpandableErrorMessage from './ExpandableErrorMessage';
 import apiClient from './appClient';
 import '../styles/components/JobStatus.css';
 
+// ---------------------------------------------------------------------------
+// AnimatedNumber — snaps in from above when value changes
+// ---------------------------------------------------------------------------
+function AnimatedNumber({ value }) {
+  const [tick, setTick] = useState(0);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current !== value) { setTick(t => t + 1); prev.current = value; }
+  }, [value]);
+  return <span key={tick} className={tick > 0 ? 'trk-num trk-num--snap' : 'trk-num'}>{value}</span>;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 function JobStatus() {
   const { public_id: routePublicId } = useParams();
   const initialPublicId = routePublicId || readStoredTrackJobId();
@@ -48,731 +47,511 @@ function JobStatus() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [progressStages, setProgressStages] = useState([]);
 
-  // Persist progress so x/y never drops to 0/0 when the job completes
   const [metrics, setMetrics] = useState({
-    moleculesProcessed: 0,
-    totalMolecules: 0,
-    predictionsMade: 0,
-    totalPredictions: 0,
-    invalidRows: 0,
-    embeddingEnabled: false,
-    embeddingState: '',
-    embeddingMethodKey: '',
-    embeddingTarget: '',
-    embeddingTotal: 0,
-    embeddingCachedAlready: 0,
-    embeddingNeedComputation: 0,
-    embeddingComputed: 0,
-    embeddingRemaining: 0,
+    moleculesProcessed: 0, totalMolecules: 0,
+    predictionsMade: 0, totalPredictions: 0, invalidRows: 0,
+    embeddingEnabled: false, embeddingState: '', embeddingMethodKey: '',
+    embeddingTarget: '', embeddingTotal: 0, embeddingCachedAlready: 0,
+    embeddingNeedComputation: 0, embeddingComputed: 0, embeddingRemaining: 0,
   });
 
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
-
-  // Polling control
   const timerRef = useRef(null);
   const isMounted = useRef(false);
 
   const clearTimer = () => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
   };
 
-  const scheduleNextPoll = useCallback(
-    (delayMs) => {
-      clearTimer();
-      if (delayMs != null) {
-        timerRef.current = setTimeout(() => {
-          if (isMounted.current) fetchJobStatus(publicId);
-        }, delayMs);
-      }
-    },
-    [publicId]
-  );
-
-  const fetchJobStatus = useCallback(
-    async (id, { manual = false } = {}) => {
-      if (!id) return;
-      if (manual) setIsRefreshing(true); // only for manual
-      try {
-        const response = await apiClient.get(`/job-status/${id}/`);
-        const data = response.data;
-
-        if (data.queue_seconds != null) {
-          setQueueSeconds(Number(data.queue_seconds));
-        }
-        if (data.compute_seconds != null) {
-          setComputeSeconds(Number(data.compute_seconds));
-        }
-        setQueuePosition(data.queue_position ?? null);
-
-        if (!isMounted.current) return;
-
-        setJobStatus(data);
-        setError(null);
-
-        setProgressStages(Array.isArray(data.progress_stages) ? data.progress_stages : []);
-
-        setMetrics((prev) => {
-          const embedding = data.embedding_progress;
-          return {
-            moleculesProcessed: data.molecules_processed,
-            totalMolecules: data.total_molecules,
-            predictionsMade: data.predictions_made,
-            totalPredictions: data.total_predictions,
-            invalidRows: data.invalid_rows,
-            embeddingEnabled: embedding ? Boolean(embedding.enabled) : prev.embeddingEnabled,
-            embeddingState: embedding ? (embedding.state || '') : prev.embeddingState,
-            embeddingMethodKey: embedding
-              ? (embedding.methodKey || embedding.method_key || '')
-              : prev.embeddingMethodKey,
-            embeddingTarget: embedding ? (embedding.target || '') : prev.embeddingTarget,
-            embeddingTotal: embedding ? Number(embedding.total || 0) : prev.embeddingTotal,
-            embeddingCachedAlready: embedding
-              ? Number(embedding.cachedAlready ?? embedding.cached_already ?? 0)
-              : prev.embeddingCachedAlready,
-            embeddingNeedComputation: embedding
-              ? Number(embedding.needComputation ?? embedding.need_computation ?? 0)
-              : prev.embeddingNeedComputation,
-            embeddingComputed: embedding ? Number(embedding.computed || 0) : prev.embeddingComputed,
-            embeddingRemaining: embedding ? Number(embedding.remaining || 0) : prev.embeddingRemaining,
-          };
-        });
-
-        const nextDelay =
-          data.status === 'Processing' ? 1000 :
-          data.status === 'Pending'    ? 3000 :
-          null;
-
-        scheduleNextPoll(nextDelay);
-      } catch (err) {
-        console.error('Error fetching job status:', err);
-        if (isMounted.current) {
-          setError('Unable to fetch job status. Retrying…');
-          scheduleNextPoll(5000);
-        }
-      } finally {
-        if (manual && isMounted.current) setIsRefreshing(false);
-      }
-    },
-    [scheduleNextPoll]
-  );
-
-
-  // Mount / unmount
-  useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-      clearTimer();
-    };
-  }, []);
-
-  // Keep state in sync with route changes and restore saved ID when route has no ID.
-  useEffect(() => {
-    if (routePublicId) {
-      setInputPublicId(routePublicId);
-      setPublicId(routePublicId);
-      return;
-    }
-    const stored = readStoredTrackJobId();
-    if (stored) {
-      setInputPublicId(stored);
-      setPublicId(stored);
-    }
-  }, [routePublicId]);
-
-  // Persist the most recently checked job ID so refresh on /track-job keeps it.
-  useEffect(() => {
-    if (publicId) {
-      writeStoredTrackJobId(publicId);
+  const scheduleNextPoll = useCallback((delayMs) => {
+    clearTimer();
+    if (delayMs != null) {
+      timerRef.current = setTimeout(() => {
+        if (isMounted.current) fetchJobStatus(publicId);
+      }, delayMs);
     }
   }, [publicId]);
 
-  // Kick off or restart polling only when the job ID changes
+  const fetchJobStatus = useCallback(async (id, { manual = false } = {}) => {
+    if (!id) return;
+    if (manual) setIsRefreshing(true);
+    try {
+      const response = await apiClient.get(`/job-status/${id}/`);
+      const data = response.data;
+      if (data.queue_seconds != null) setQueueSeconds(Number(data.queue_seconds));
+      if (data.compute_seconds != null) setComputeSeconds(Number(data.compute_seconds));
+      setQueuePosition(data.queue_position ?? null);
+      if (!isMounted.current) return;
+      setJobStatus(data);
+      setError(null);
+      setProgressStages(Array.isArray(data.progress_stages) ? data.progress_stages : []);
+      setMetrics((prev) => {
+        const emb = data.embedding_progress;
+        return {
+          moleculesProcessed: data.molecules_processed,
+          totalMolecules: data.total_molecules,
+          predictionsMade: data.predictions_made,
+          totalPredictions: data.total_predictions,
+          invalidRows: data.invalid_rows,
+          embeddingEnabled: emb ? Boolean(emb.enabled) : prev.embeddingEnabled,
+          embeddingState: emb ? (emb.state || '') : prev.embeddingState,
+          embeddingMethodKey: emb ? (emb.methodKey || emb.method_key || '') : prev.embeddingMethodKey,
+          embeddingTarget: emb ? (emb.target || '') : prev.embeddingTarget,
+          embeddingTotal: emb ? Number(emb.total || 0) : prev.embeddingTotal,
+          embeddingCachedAlready: emb ? Number(emb.cachedAlready ?? emb.cached_already ?? 0) : prev.embeddingCachedAlready,
+          embeddingNeedComputation: emb ? Number(emb.needComputation ?? emb.need_computation ?? 0) : prev.embeddingNeedComputation,
+          embeddingComputed: emb ? Number(emb.computed || 0) : prev.embeddingComputed,
+          embeddingRemaining: emb ? Number(emb.remaining || 0) : prev.embeddingRemaining,
+        };
+      });
+      const nextDelay = data.status === 'Processing' ? 1000 : data.status === 'Pending' ? 3000 : null;
+      scheduleNextPoll(nextDelay);
+    } catch (err) {
+      console.error('Error fetching job status:', err);
+      if (isMounted.current) { setError('Unable to fetch job status. Retrying…'); scheduleNextPoll(5000); }
+    } finally {
+      if (manual && isMounted.current) setIsRefreshing(false);
+    }
+  }, [scheduleNextPoll]);
+
+  useEffect(() => { isMounted.current = true; return () => { isMounted.current = false; clearTimer(); }; }, []);
+
+  useEffect(() => {
+    if (routePublicId) { setInputPublicId(routePublicId); setPublicId(routePublicId); return; }
+    const stored = readStoredTrackJobId();
+    if (stored) { setInputPublicId(stored); setPublicId(stored); }
+  }, [routePublicId]);
+
+  useEffect(() => { if (publicId) writeStoredTrackJobId(publicId); }, [publicId]);
+
   useEffect(() => {
     clearTimer();
-    setJobStatus(null);
-    setError(null);
-    setQueueSeconds(null);
-    setComputeSeconds(null);
-    setQueueTime('');
-    setComputeTime('');
-    setQueuePosition(null);
-    setProgressStages([]);
-    // Reset sticky metrics for a new job
+    setJobStatus(null); setError(null); setQueueSeconds(null); setComputeSeconds(null);
+    setQueueTime(''); setComputeTime(''); setQueuePosition(null); setProgressStages([]);
     setMetrics({
-      moleculesProcessed: 0,
-      totalMolecules: 0,
-      predictionsMade: 0,
-      totalPredictions: 0,
-      invalidRows: 0,
-      embeddingEnabled: false,
-      embeddingState: '',
-      embeddingMethodKey: '',
-      embeddingTarget: '',
-      embeddingTotal: 0,
-      embeddingCachedAlready: 0,
-      embeddingNeedComputation: 0,
-      embeddingComputed: 0,
-      embeddingRemaining: 0,
+      moleculesProcessed: 0, totalMolecules: 0, predictionsMade: 0, totalPredictions: 0, invalidRows: 0,
+      embeddingEnabled: false, embeddingState: '', embeddingMethodKey: '',
+      embeddingTarget: '', embeddingTotal: 0, embeddingCachedAlready: 0,
+      embeddingNeedComputation: 0, embeddingComputed: 0, embeddingRemaining: 0,
     });
     if (publicId) fetchJobStatus(publicId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicId]);
 
-  // Queue time ticker — increments while job is Pending
+  // Queue time ticker
   useEffect(() => {
     if (queueSeconds == null) return;
     setQueueTime(formatDuration(moment.duration(queueSeconds * 1000)));
     if (jobStatus?.status !== 'Pending') return;
     const id = setInterval(() => {
-      setQueueSeconds((s) => {
-        const next = (s || 0) + 1;
-        setQueueTime(formatDuration(moment.duration(next * 1000)));
-        return next;
-      });
+      setQueueSeconds(s => { const n = (s || 0) + 1; setQueueTime(formatDuration(moment.duration(n * 1000))); return n; });
     }, 1000);
     return () => clearInterval(id);
   }, [queueSeconds, jobStatus?.status]);
 
-  // Compute time ticker — increments while job is Processing
+  // Compute time ticker
   useEffect(() => {
     if (computeSeconds == null) return;
     setComputeTime(formatDuration(moment.duration(computeSeconds * 1000)));
     if (jobStatus?.status !== 'Processing') return;
     const id = setInterval(() => {
-      setComputeSeconds((s) => {
-        const next = (s || 0) + 1;
-        setComputeTime(formatDuration(moment.duration(next * 1000)));
-        return next;
-      });
+      setComputeSeconds(s => { const n = (s || 0) + 1; setComputeTime(formatDuration(moment.duration(n * 1000))); return n; });
     }, 1000);
     return () => clearInterval(id);
   }, [computeSeconds, jobStatus?.status]);
 
-  const handleCheckStatus = (e) => {
-    e.preventDefault();
-    if (!inputPublicId.trim()) return;
-    setPublicId(inputPublicId.trim());
-  };
-
-  const handleManualRefresh = () => {
-    if (publicId) {
-      clearTimer();
-      fetchJobStatus(publicId, { manual: true });
-    }
-  };
-
+  const handleCheckStatus = (e) => { e.preventDefault(); if (inputPublicId.trim()) setPublicId(inputPublicId.trim()); };
+  const handleManualRefresh = () => { if (publicId) { clearTimer(); fetchJobStatus(publicId, { manual: true }); } };
   const copyToClipboard = async (text) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setIsCopying(true);
-      setTimeout(() => setIsCopying(false), 1200);
-    } catch {
-      // ignore
-    }
+    try { await navigator.clipboard.writeText(text); setIsCopying(true); setTimeout(() => setIsCopying(false), 1200); } catch {}
   };
 
-  const statusMeta = useMemo(() => {
+  const statusKey = (jobStatus?.status || 'none').toLowerCase();
+
+  const statusLabel = useMemo(() => {
     const s = jobStatus?.status;
-    if (s === 'Completed') return { variant: 'success', icon: <CheckCircle className="me-1" />, label: 'Completed' };
-    if (s === 'Failed') return { variant: 'danger', icon: <XCircle className="me-1" />, label: 'Failed' };
-    if (s === 'Processing') return { variant: 'info', icon: <HourglassSplit className="me-1" />, label: 'Processing' };
-    if (s === 'Pending') return { variant: 'secondary', icon: <HourglassSplit className="me-1" />, label: 'Pending' };
-    return { variant: 'secondary', icon: <HourglassSplit className="me-1" />, label: '—' };
+    if (s === 'Completed') return 'Completed';
+    if (s === 'Failed')    return 'Failed';
+    if (s === 'Processing') return 'Processing';
+    if (s === 'Pending')   return 'Pending';
+    return '—';
   }, [jobStatus]);
 
   const normalizedStages = useMemo(() => {
-    if (Array.isArray(progressStages) && progressStages.length > 0) {
-      return progressStages;
-    }
-    if (!jobStatus) return [];
-    if (jobStatus.status === 'Pending') return [];
+    if (Array.isArray(progressStages) && progressStages.length > 0) return progressStages;
+    if (!jobStatus || jobStatus.status === 'Pending') return [];
     return buildLegacyStages(jobStatus, metrics);
   }, [progressStages, jobStatus, metrics]);
 
-  // Build a nice expandable block for rows we couldn't predict (if the API returns any flavour of this)
   const skippedRowsMessage = useMemo(() => {
     if (!jobStatus) return null;
     const raw = jobStatus.error_message;
     if (!raw) return null;
-
-    // Try to parse backend's structured JSON: [{rows: [0,2], reason: "..."}, ...]
     if (typeof raw === 'string' && raw.trimStart().startsWith('[')) {
       try {
         const groups = JSON.parse(raw);
         if (Array.isArray(groups) && groups.length > 0) {
-          const lines = groups.map(({ rows, reason }) => {
+          return groups.map(({ rows, reason }) => {
             const label = Array.isArray(rows) && rows.length > 0
-              ? (rows.length === 1
-                  ? `Row ${rows[0] + 1}`
-                  : `Rows ${rows.map(r => r + 1).join(', ')}`)
+              ? (rows.length === 1 ? `Row ${rows[0] + 1}` : `Rows ${rows.map(r => r + 1).join(', ')}`)
               : 'Some rows';
             return `${label}: ${reason || 'Unknown reason'}`;
-          });
-          return lines.join('\n');
+          }).join('\n');
         }
-      } catch {
-        // fall through to plain string
-      }
+      } catch {}
     }
-
     return typeof raw === 'string' ? raw : null;
   }, [jobStatus]);
 
   const failedMessage = useMemo(() => {
     if (jobStatus?.status !== 'Failed') return null;
-
-    const candidates = [
-      jobStatus?.error_message,
-      jobStatus?.error,
-      jobStatus?.message,
-      jobStatus?.detail,
-      jobStatus?.failure_reason,
-    ];
-
-    for (const value of candidates) {
-      if (typeof value === 'string' && value.trim()) {
-        return sanitiseErrorForUser(value.trim());
-      }
-      if (Array.isArray(value) && value.length > 0) {
-        return sanitiseErrorForUser(value.map(String).join('\n'));
-      }
+    for (const v of [jobStatus?.error_message, jobStatus?.error, jobStatus?.message, jobStatus?.detail, jobStatus?.failure_reason]) {
+      if (typeof v === 'string' && v.trim()) return sanitiseErrorForUser(v.trim());
+      if (Array.isArray(v) && v.length > 0) return sanitiseErrorForUser(v.map(String).join('\n'));
     }
-
     return sanitiseErrorForUser('');
   }, [jobStatus]);
 
   const stageSummary = useMemo(() => {
-    const summary = {
-      total: normalizedStages.length,
-      completed: 0,
-      running: 0,
-      pending: 0,
-      failed: 0,
-    };
-
-    normalizedStages.forEach((stage) => {
-      const state = String(stage.status || 'pending').toLowerCase();
-      if (state === 'completed') summary.completed += 1;
-      else if (state === 'running') summary.running += 1;
-      else if (state === 'failed') summary.failed += 1;
-      else summary.pending += 1;
+    const s = { total: normalizedStages.length, completed: 0, running: 0, pending: 0, failed: 0 };
+    normalizedStages.forEach(st => {
+      const state = String(st.status || 'pending').toLowerCase();
+      if (state === 'completed') s.completed++;
+      else if (state === 'running') s.running++;
+      else if (state === 'failed') s.failed++;
+      else s.pending++;
     });
-
-    return summary;
+    return s;
   }, [normalizedStages]);
 
   const embeddingSummary = useMemo(() => {
-    const summary = {
-      enabled: 0,
-      done: 0,
-      running: 0,
-      pending: 0,
-      error: 0,
-      notRequired: 0,
-    };
-
-    normalizedStages.forEach((stage) => {
+    const s = { enabled: 0, done: 0, running: 0, pending: 0, error: 0, notRequired: 0 };
+    normalizedStages.forEach(stage => {
       const emb = stage.embedding || {};
       const enabled = Boolean(emb.enabled);
       const state = String(emb.state || (enabled ? 'pending' : 'not_required')).toLowerCase();
-
-      if (!enabled || state === 'not_required') {
-        summary.notRequired += 1;
-        return;
-      }
-
-      summary.enabled += 1;
-      if (state === 'done') summary.done += 1;
-      else if (state === 'running') summary.running += 1;
-      else if (state === 'error') summary.error += 1;
-      else summary.pending += 1;
+      if (!enabled || state === 'not_required') { s.notRequired++; return; }
+      s.enabled++;
+      if (state === 'done') s.done++;
+      else if (state === 'running') s.running++;
+      else if (state === 'error') s.error++;
+      else s.pending++;
     });
-
-    return summary;
+    return s;
   }, [normalizedStages]);
 
   return (
     <Container className="mt-1 pb-5">
       <Row className="justify-content-center">
         <Col md={10} lg={9}>
-          <Card className="section-container job-status-card mb-4">
-            <Card.Header as="h3" className="text-center">Track Job Status</Card.Header>
 
-            <Card.Body>
-              {!routePublicId && (
-                <Form onSubmit={handleCheckStatus} className="mb-4">
-                  <Form.Group controlId="jobIdInput">
-                    <Form.Label className="mb-2">Enter Job ID</Form.Label>
-                    <div className="d-flex gap-2">
-                      <Form.Control
-                        type="text"
-                        value={inputPublicId}
-                        placeholder="e.g., pl1a2V1"
-                        onChange={(e) => setInputPublicId(e.target.value)}
-                        required
-                        className="kave-input"
-                      />
-                      <Button type="submit" className="kave-btn">
-                        <span className="kave-line"></span>
-                        Check Status
-                      </Button>
+          {/* ── Search form (only at /track-job without an ID) ── */}
+          {!routePublicId && (
+            <form onSubmit={handleCheckStatus} className="trk-search section-container mb-3">
+              <label className="trk-search__lbl">Enter Job ID</label>
+              <div className="trk-search__row">
+                <input
+                  type="text"
+                  className="trk-search__input"
+                  value={inputPublicId}
+                  placeholder="e.g. pl1a2V1"
+                  onChange={e => setInputPublicId(e.target.value)}
+                  required
+                />
+                <button type="submit" className="trk-search__btn">Track</button>
+              </div>
+            </form>
+          )}
+
+          {/* ── Error alert ── */}
+          {error && (
+            <div className="trk-alert mb-2">
+              <ExclamationTriangleFill size={13} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* ── Main tracker panel ── */}
+          {publicId && (
+            <div className="trk section-container">
+
+              {/* ── Identity bar ── */}
+              <div className="trk__bar">
+                <div className="trk__id">
+                  <span className="trk__id-eyebrow">Job ID</span>
+                  <div className="trk__id-row">
+                    <code className="trk__id-code">{publicId}</code>
+                    <button className="trk__icon-btn" onClick={() => copyToClipboard(publicId)} title="Copy ID">
+                      {isCopying ? <ClipboardCheck size={13} /> : <Clipboard size={13} />}
+                    </button>
+                  </div>
+                </div>
+                <div className="trk__bar-right">
+                  {jobStatus && (
+                    <div className={`trk__status trk__status--${statusKey}`}>
+                      <span className="trk__status-dot" />
+                      <span className="trk__status-lbl">{statusLabel}</span>
                     </div>
-                  </Form.Group>
-                </Form>
+                  )}
+                  <button
+                    className="trk__icon-btn"
+                    onClick={handleManualRefresh}
+                    disabled={isRefreshing}
+                    title="Refresh"
+                  >
+                    <ArrowClockwise size={15} className={isRefreshing ? 'spin' : ''} />
+                  </button>
+                </div>
+              </div>
+
+              {/* ── Timing readouts ── */}
+              {jobStatus && (queueTime || computeTime) && (
+                <div className="trk__timing">
+                  {queueTime && (
+                    <div className="trk__clock">
+                      <div className="trk__clock-lbl">Queue Time</div>
+                      <div className="trk__clock-val">{queueTime}</div>
+                      <div className="trk__clock-sub">Time in queue before processing</div>
+                    </div>
+                  )}
+                  {queueTime && computeTime && <div className="trk__timing-div" />}
+                  {computeTime && (
+                    <div className="trk__clock">
+                      <div className="trk__clock-lbl">Compute Time</div>
+                      <div className="trk__clock-val">{computeTime}</div>
+                      <div className="trk__clock-sub">Active processing on server</div>
+                    </div>
+                  )}
+                </div>
               )}
 
-              {error && (
-                <Alert variant="warning" className="d-flex align-items-center">
-                  <ExclamationTriangle className="me-2" />
-                  <div>{error}</div>
-                </Alert>
+              {/* ── Pending state ── */}
+              {jobStatus?.status === 'Pending' && (
+                <div className="trk__pending">
+                  <div className="trk__pending-dots">
+                    <span /><span /><span />
+                  </div>
+                  <span className="trk__pending-txt">
+                    {queuePosition != null
+                      ? <><strong className="trk__pending-pos">#{queuePosition}</strong>&ensp;in queue</>
+                      : 'Queued — waiting to start'
+                    }
+                  </span>
+                </div>
               )}
 
-              {publicId && (
-                <div className="job-header mb-4">
-                  <div className="d-flex align-items-center gap-2">
-                    <span className="label-muted">Job ID:</span>
-                    <code className="jobid-chip">{publicId}</code>
-                    <Button
-                      variant="outline-light"
-                      size="sm"
-                      className="chip-action"
-                      onClick={() => copyToClipboard(publicId)}
-                    >
-                      {isCopying ? <ClipboardCheck size={16} /> : <Clipboard size={16} />}
-                    </Button>
+              {/* ── Predictions section ── */}
+              {jobStatus && (
+                <div className="trk__section">
+                  <div className="trk__section-hdr">
+                    <span className="trk__section-title">Predictions</span>
+                    {normalizedStages.length > 0 && (
+                      <div className="trk__chips">
+                        <span className="trk__chip">{stageSummary.total} targets</span>
+                        {stageSummary.completed > 0 && <span className="trk__chip trk__chip--ok">{stageSummary.completed} done</span>}
+                        {stageSummary.running > 0 && <span className="trk__chip trk__chip--run">{stageSummary.running} running</span>}
+                        {stageSummary.pending > 0 && <span className="trk__chip trk__chip--dim">{stageSummary.pending} pending</span>}
+                        {stageSummary.failed > 0 && <span className="trk__chip trk__chip--err">{stageSummary.failed} failed</span>}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="d-flex align-items-center gap-2">
-                    <Badge bg={statusMeta.variant} className="status-pill">
-                      {statusMeta.icon}{statusMeta.label}
-                    </Badge>
-                    <Button
-                      size="sm"
-                      className="btn btn-custom-subtle"
-                      onClick={handleManualRefresh}
-                      disabled={isRefreshing}
-                    >
-                      <ArrowClockwise className={`me-1 ${isRefreshing ? 'spin' : ''}`} />
-                      Refresh
-                    </Button>
+                  {normalizedStages.length === 0 ? (
+                    <div className="trk__empty">Target progress will appear once processing begins.</div>
+                  ) : (
+                    <div className="trk__stage-list">
+                      {normalizedStages.map((stage, idx) => {
+                        const pred = stage.prediction || {};
+                        const made = num(pred.predictions_made ?? pred.predictionsMade ?? 0);
+                        const total = num(pred.predictions_total ?? pred.predictionsTotal ?? 0);
+                        const processed = num(pred.molecules_processed ?? pred.moleculesProcessed ?? 0);
+                        const molTotal = num(pred.molecules_total ?? pred.moleculesTotal ?? 0);
+                        const invalid = num(pred.invalid_rows ?? pred.invalidRows ?? 0);
+                        const ss = String(stage.status || 'pending').toLowerCase();
+                        const pct = total > 0 ? Math.min(100, Math.round((made / total) * 100)) : (ss === 'completed' ? 100 : 0);
+                        const n = Number.isFinite(Number(stage.index)) ? Number(stage.index) + 1 : idx + 1;
+                        const method = stage.method_name || stage.methodName || '';
+                        const mod = ss === 'completed' ? 'ok' : ss === 'failed' ? 'err' : ss === 'running' ? 'run' : 'dim';
+                        const hasData = ss !== 'pending';
+
+                        return (
+                          <div
+                            className={`trk__stage trk__stage--${ss}`}
+                            key={`${stage.index ?? idx}-${stage.target}-${stage.method_key || stage.methodKey || ''}`}
+                          >
+                            <div className="trk__stage-stripe" />
+                            <div className="trk__stage-body">
+                              <div className="trk__stage-top">
+                                <div className="trk__stage-ident">
+                                  <span className="trk__stage-idx">{String(n).padStart(2, '0')}</span>
+                                  <span className="trk__stage-name">{stage.target || `Target ${n}`}</span>
+                                  {method && <span className="trk__stage-method">{method}</span>}
+                                </div>
+                                <span className={`trk__state trk__state--${ss}`}>
+                                  {formatPredictionStageStatus(ss)}
+                                </span>
+                              </div>
+
+                              {hasData && (
+                                <div className="trk__metrics">
+                                  <div className="trk__metric">
+                                    <span className="trk__metric-k">Predictions</span>
+                                    <span className="trk__metric-v">
+                                      <AnimatedNumber value={made} />&thinsp;/&thinsp;<AnimatedNumber value={total} />
+                                    </span>
+                                  </div>
+                                  <div className="trk__metric-sep" />
+                                  <div className="trk__metric">
+                                    <span className="trk__metric-k">Validated Rows</span>
+                                    <span className="trk__metric-v">
+                                      <AnimatedNumber value={processed} />&thinsp;/&thinsp;<AnimatedNumber value={molTotal} />
+                                    </span>
+                                  </div>
+                                  <div className="trk__metric-sep" />
+                                  <div className={`trk__metric${invalid > 0 ? ' trk__metric--warn' : ''}`}>
+                                    <span className="trk__metric-k">Invalid Rows</span>
+                                    <span className="trk__metric-v"><AnimatedNumber value={invalid} /></span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {hasData && (
+                                <div className="trk__prog">
+                                  <div className={`trk__prog-track trk__prog-track--${mod}`}>
+                                    <div className="trk__prog-fill" style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="trk__prog-pct"><AnimatedNumber value={pct} />%</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Protein Embeddings section ── */}
+              {jobStatus && normalizedStages.length > 0 && (
+                <div className="trk__section">
+                  <div className="trk__section-hdr">
+                    <span className="trk__section-title">Protein Embeddings</span>
+                    <div className="trk__chips">
+                      <span className="trk__chip">{embeddingSummary.enabled} active</span>
+                      {embeddingSummary.done > 0 && <span className="trk__chip trk__chip--ok">{embeddingSummary.done} done</span>}
+                      {embeddingSummary.running > 0 && <span className="trk__chip trk__chip--run">{embeddingSummary.running} running</span>}
+                      {embeddingSummary.pending > 0 && <span className="trk__chip trk__chip--dim">{embeddingSummary.pending} pending</span>}
+                      {embeddingSummary.error > 0 && <span className="trk__chip trk__chip--err">{embeddingSummary.error} error</span>}
+                      {embeddingSummary.notRequired > 0 && <span className="trk__chip trk__chip--dim">{embeddingSummary.notRequired} not required</span>}
+                    </div>
+                  </div>
+
+                  <div className="trk__emb-list">
+                    {normalizedStages.map((stage, idx) => {
+                      const emb = stage.embedding || {};
+                      const enabled = Boolean(emb.enabled);
+                      const state = String(emb.state || (enabled ? 'pending' : 'not_required')).toLowerCase();
+                      const cached = num(emb.cached_already ?? emb.cachedAlready ?? 0);
+                      const need = num(emb.need_computation ?? emb.needComputation ?? 0);
+                      const computed = num(emb.computed ?? 0);
+                      const remaining = num(emb.remaining ?? Math.max(need - computed, 0));
+                      const pct = need > 0 ? Math.min(100, Math.round((computed / need) * 100)) : (state === 'done' ? 100 : 0);
+                      const es = state === 'done' ? 'completed' : state === 'running' ? 'running' : state === 'error' ? 'failed' : 'pending';
+                      const mod = es === 'completed' ? 'ok' : es === 'failed' ? 'err' : es === 'running' ? 'run' : 'dim';
+                      const n = Number.isFinite(Number(stage.index)) ? Number(stage.index) + 1 : idx + 1;
+                      const method = stage.method_name || stage.methodName || '';
+                      const isActive = enabled && state !== 'not_required';
+
+                      return (
+                        <div
+                          className={`trk__emb-row trk__emb-row--${es}`}
+                          key={`emb-${stage.index ?? idx}-${stage.target}-${stage.method_key || stage.methodKey || ''}`}
+                        >
+                          <div className="trk__emb-stripe" />
+                          <div className="trk__emb-body">
+                            <div className="trk__emb-top">
+                              <div className="trk__stage-ident">
+                                <span className="trk__stage-idx">{String(n).padStart(2, '0')}</span>
+                                <span className="trk__stage-name">{stage.target || `Target ${n}`}</span>
+                                {method && <span className="trk__stage-method">{method}</span>}
+                              </div>
+                              <span className={`trk__state trk__state--${es}`}>{formatEmbeddingState(state)}</span>
+                            </div>
+
+                            {!isActive ? (
+                              <div className="trk__emb-na">No embedding computation required</div>
+                            ) : (
+                              <>
+                                <div className="trk__emb-metrics">
+                                  <div className="trk__emb-stat">
+                                    <span className="trk__emb-stat-k">Cached</span>
+                                    <span className="trk__emb-stat-v"><AnimatedNumber value={cached} /></span>
+                                  </div>
+                                  <div className="trk__emb-stat">
+                                    <span className="trk__emb-stat-k">Need Compute</span>
+                                    <span className="trk__emb-stat-v"><AnimatedNumber value={need} /></span>
+                                  </div>
+                                  <div className="trk__emb-stat">
+                                    <span className="trk__emb-stat-k">Computed</span>
+                                    <span className="trk__emb-stat-v"><AnimatedNumber value={computed} /></span>
+                                  </div>
+                                  <div className="trk__emb-stat">
+                                    <span className="trk__emb-stat-k">Remaining</span>
+                                    <span className="trk__emb-stat-v"><AnimatedNumber value={remaining} /></span>
+                                  </div>
+                                </div>
+                                <div className="trk__prog trk__prog--sm">
+                                  <div className={`trk__prog-track trk__prog-track--${mod}`}>
+                                    <div className="trk__prog-fill" style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="trk__prog-pct"><AnimatedNumber value={pct} />%</span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
-              {jobStatus && (
-                <>
-                  {/* ── PENDING ────────────────────────────────────────── */}
-                  {jobStatus.status === 'Pending' && (
-                    <div className="pending-section mb-4">
-                      {queuePosition != null && (
-                        <div className="queue-position-badge">
-                          Position <span className="queue-position-number">#{queuePosition}</span> in queue
-                        </div>
-                      )}
-                      <div className="pending-hint">Job is queued and waiting to start…</div>
-                      <Spinner animation="border" role="status" />
-                    </div>
-                  )}
-
-                  {/* ── TIMING ─────────────────────────────────────────── */}
-                  <div className="stat-section">
-                    <div className="stat-section-header">
-                      <div>
-                        <div className="stat-section-title">
-                          <Stopwatch className="me-2" />
-                          Timing
-                        </div>
-                        <p className="stat-section-desc">
-                          Queue and compute duration for this job.
-                        </p>
-                      </div>
-                    </div>
-                    <Row className="g-3">
-                      <Col xs={12} sm={6}>
-                        <div className="stat-card">
-                          <div className="stat-label"><Stopwatch className="me-2" />Queue Time</div>
-                          <div className="stat-value">{queueTime || '—'}</div>
-                          <div className="stat-hint">Time spent waiting in queue before processing began</div>
-                        </div>
-                      </Col>
-                      <Col xs={12} sm={6}>
-                        <div className="stat-card">
-                          <div className="stat-label"><Cpu className="me-2" />Compute Time</div>
-                          <div className="stat-value">{computeTime || '—'}</div>
-                          <div className="stat-hint">Active processing time on the server</div>
-                        </div>
-                      </Col>
-                    </Row>
+              {/* ── Completed banner ── */}
+              {jobStatus?.status === 'Completed' && (
+                <div className="trk__done">
+                  <div className="trk__done-left">
+                    <CheckCircleFill size={16} className="trk__done-icon" />
+                    <span>All predictions complete — results ready for download.</span>
                   </div>
-
-                  {/* ── RESULTS ────────────────────────────────────────── */}
-                  <div className="stat-section">
-                    <div className="stat-section-header">
-                      <div>
-                        <div className="stat-section-title">
-                          <GraphUp className="me-2" />
-                          Results
-                        </div>
-                      </div>
-                      {normalizedStages.length > 0 && (
-                        <div className="section-chip-row">
-                          <span className="section-chip">{stageSummary.total} targets</span>
-                          <span className="section-chip is-success">{stageSummary.completed} completed</span>
-                          {stageSummary.running > 0 && (
-                            <span className="section-chip is-info">{stageSummary.running} running</span>
-                          )}
-                          {stageSummary.pending > 0 && (
-                            <span className="section-chip">{stageSummary.pending} pending</span>
-                          )}
-                          {stageSummary.failed > 0 && (
-                            <span className="section-chip is-danger">{stageSummary.failed} failed</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {normalizedStages.length === 0 && (
-                      <div className="stat-hint">
-                        Target progress will appear once processing begins.
-                      </div>
-                    )}
-                    {normalizedStages.length > 0 && (
-                      <div className="stage-list">
-                        {normalizedStages.map((stage, idx) => {
-                          const pred = stage.prediction || {};
-                          const made = num(pred.predictions_made ?? pred.predictionsMade ?? 0);
-                          const total = num(pred.predictions_total ?? pred.predictionsTotal ?? 0);
-                          const processed = num(pred.molecules_processed ?? pred.moleculesProcessed ?? 0);
-                          const moleculesTotal = num(pred.molecules_total ?? pred.moleculesTotal ?? 0);
-                          const invalid = num(pred.invalid_rows ?? pred.invalidRows ?? 0);
-                          const stageStatus = String(stage.status || 'pending').toLowerCase();
-                          const badgeVariant =
-                            stageStatus === 'completed' ? 'success'
-                            : stageStatus === 'running' ? 'info'
-                            : stageStatus === 'failed' ? 'danger'
-                            : 'secondary';
-                          const progressVariant =
-                            stageStatus === 'completed' ? 'success'
-                            : stageStatus === 'failed' ? 'danger'
-                            : 'info';
-                          const pct = total > 0
-                            ? Math.min(100, Math.round((made / total) * 100))
-                            : (stageStatus === 'completed' ? 100 : 0);
-                          const stageIndexValue = Number(stage.index);
-                          const stageNumber = Number.isFinite(stageIndexValue) ? stageIndexValue + 1 : idx + 1;
-                          const methodName = stage.method_name || stage.methodName || '';
-
-                          return (
-                            <div
-                              className="stage-card"
-                              key={`${stage.index ?? idx}-${stage.target}-${stage.method_key || stage.methodKey || ''}`}
-                            >
-                              <div className="stage-card-top">
-                                <div className="stage-name-wrap">
-                                  <div className="stage-index-label">Target {stageNumber}</div>
-                                  <div className="stage-title-line">
-                                    <span className="stage-target-name">{stage.target || `Target ${stageNumber}`}</span>
-                                    {methodName && <span className="stage-method-chip">{methodName}</span>}
-                                  </div>
-                                </div>
-                                <Badge bg={badgeVariant} className="stage-status-chip">
-                                  {formatPredictionStageStatus(stageStatus)}
-                                </Badge>
-                              </div>
-
-                              <div className="stage-metrics-grid">
-                                <div className="metric-chip">
-                                  <span className="metric-chip-label">Predictions</span>
-                                  <span className="metric-chip-value">{made} / {total}</span>
-                                </div>
-                                <div className="metric-chip">
-                                  <span className="metric-chip-label">Validated Rows</span>
-                                  <span className="metric-chip-value">{processed} / {moleculesTotal}</span>
-                                </div>
-                                <div className={`metric-chip ${invalid > 0 ? 'is-warning' : ''}`}>
-                                  <span className="metric-chip-label">Invalid Rows</span>
-                                  <span className="metric-chip-value">{invalid}</span>
-                                </div>
-                              </div>
-
-                              <div className="stage-progress-row">
-                                <span>Prediction Progress</span>
-                                <span>{pct}%</span>
-                              </div>
-                              <ProgressBar now={pct} variant={progressVariant} className="kave-progress" />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ── PROTEIN EMBEDDINGS ─────────────────────────────── */}
-                  <div className="stat-section">
-                    <div className="stat-section-header">
-                      <div>
-                        <div className="stat-section-title">
-                          <Database className="me-2" />
-                          Protein Embeddings
-                        </div>
-                      </div>
-                      {normalizedStages.length > 0 && (
-                        <div className="section-chip-row">
-                          <span className="section-chip">{embeddingSummary.enabled} active</span>
-                          {embeddingSummary.done > 0 && (
-                            <span className="section-chip is-success">{embeddingSummary.done} completed</span>
-                          )}
-                          {embeddingSummary.running > 0 && (
-                            <span className="section-chip is-info">{embeddingSummary.running} running</span>
-                          )}
-                          {embeddingSummary.pending > 0 && (
-                            <span className="section-chip">{embeddingSummary.pending} pending</span>
-                          )}
-                          {embeddingSummary.error > 0 && (
-                            <span className="section-chip is-danger">{embeddingSummary.error} error</span>
-                          )}
-                          {embeddingSummary.notRequired > 0 && (
-                            <span className="section-chip">{embeddingSummary.notRequired} not required</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {normalizedStages.length === 0 && (
-                      <div className="stat-hint">
-                        Embedding details will appear once the active target starts prediction.
-                      </div>
-                    )}
-                    {normalizedStages.length > 0 && (
-                      <div className="stage-list">
-                        {normalizedStages.map((stage, idx) => {
-                          const emb = stage.embedding || {};
-                          const enabled = Boolean(emb.enabled);
-                          const state = String(emb.state || (enabled ? 'pending' : 'not_required')).toLowerCase();
-                          const cached = num(emb.cached_already ?? emb.cachedAlready ?? 0);
-                          const need = num(emb.need_computation ?? emb.needComputation ?? 0);
-                          const computed = num(emb.computed ?? 0);
-                          const remaining = num(emb.remaining ?? Math.max(need - computed, 0));
-                          const pct = need > 0
-                            ? Math.min(100, Math.round((computed / need) * 100))
-                            : (state === 'done' ? 100 : 0);
-                          const badgeVariant =
-                            state === 'done' ? 'success'
-                            : state === 'running' ? 'info'
-                            : state === 'error' ? 'danger'
-                            : state === 'not_required' ? 'secondary'
-                            : 'secondary';
-                          const progressVariant =
-                            state === 'done' ? 'success'
-                            : state === 'error' ? 'danger'
-                            : 'info';
-                          const stageIndexValue = Number(stage.index);
-                          const stageNumber = Number.isFinite(stageIndexValue) ? stageIndexValue + 1 : idx + 1;
-                          const methodName = stage.method_name || stage.methodName || '';
-
-                          return (
-                            <div
-                              className="stage-card stage-card-embedding"
-                              key={`emb-${stage.index ?? idx}-${stage.target}-${stage.method_key || stage.methodKey || ''}`}
-                            >
-                              <div className="stage-card-top">
-                                <div className="stage-name-wrap">
-                                  <div className="stage-index-label">Target {stageNumber}</div>
-                                  <div className="stage-title-line">
-                                    <span className="stage-target-name">{stage.target || `Target ${stageNumber}`}</span>
-                                    {methodName && <span className="stage-method-chip">{methodName}</span>}
-                                  </div>
-                                </div>
-                                <Badge bg={badgeVariant} className="stage-status-chip">
-                                  {formatEmbeddingState(state)}
-                                </Badge>
-                              </div>
-
-                              {!enabled || state === 'not_required' ? (
-                                <div className="stage-empty-note">
-                                  No embedding computation required for this target.
-                                </div>
-                              ) : (
-                                <>
-                                  <div className="stage-metrics-grid stage-metrics-grid-embedding">
-                                    <div className="metric-chip">
-                                      <span className="metric-chip-label">Cached</span>
-                                      <span className="metric-chip-value">{cached}</span>
-                                    </div>
-                                    <div className="metric-chip">
-                                      <span className="metric-chip-label">Need Compute</span>
-                                      <span className="metric-chip-value">{need}</span>
-                                    </div>
-                                    <div className="metric-chip">
-                                      <span className="metric-chip-label">Computed</span>
-                                      <span className="metric-chip-value">{computed}</span>
-                                    </div>
-                                    <div className="metric-chip">
-                                      <span className="metric-chip-label">Remaining</span>
-                                      <span className="metric-chip-value">{remaining}</span>
-                                    </div>
-                                  </div>
-
-                                  <div className="stage-progress-row">
-                                    <span>Embedding Progress</span>
-                                    <span>{pct}%</span>
-                                  </div>
-                                  <ProgressBar now={pct} variant={progressVariant} className="kave-progress" />
-                                </>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ── COMPLETED ──────────────────────────────────────── */}
-                  {jobStatus.status === 'Completed' && (
-                    <div className="job-complete-banner mt-3">
-                      <div className="job-complete-header">
-                        <CheckCircle size={18} className="me-2" />
-                        Job Completed
-                      </div>
-                      <div className="job-complete-body d-flex align-items-center justify-content-between flex-wrap gap-2">
-                        <span>Your results are ready for download.</span>
-                        <a
-                          className="btn btn-custom-subtle"
-                          href={`${apiBaseUrl}/jobs/${publicId}/download/`}
-                        >
-                          <FileEarmarkArrowDown className="me-2" />
-                          Download Results
-                        </a>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Expandable details for skipped/unpredicted rows */}
-                  {skippedRowsMessage && (
-                    <div className="mt-3">
-                      <ExpandableErrorMessage errorMessage={skippedRowsMessage} />
-                    </div>
-                  )}
-
-                  {/* ── FAILED ─────────────────────────────────────────── */}
-                  {jobStatus.status === 'Failed' && (
-                    <div className="job-failed-banner mt-3">
-                      <div className="job-failed-header">
-                        <XCircle size={18} className="me-2" />
-                        Job Failed
-                      </div>
-                      <div className="job-failed-body">
-                        {failedMessage}
-                      </div>
-                    </div>
-                  )}
-                </>
+                  <a className="trk__download-btn" href={`${apiBaseUrl}/jobs/${publicId}/download/`}>
+                    <CloudArrowDown size={15} />
+                    Download Results
+                  </a>
+                </div>
               )}
-            </Card.Body>
-          </Card>
+
+              {/* ── Skipped rows ── */}
+              {skippedRowsMessage && (
+                <div className="trk__expandable">
+                  <ExpandableErrorMessage errorMessage={skippedRowsMessage} />
+                </div>
+              )}
+
+              {/* ── Failed banner ── */}
+              {jobStatus?.status === 'Failed' && (
+                <div className="trk__fail">
+                  <div className="trk__fail-head">
+                    <XCircleFill size={15} />
+                    <span>Job Failed</span>
+                  </div>
+                  <div className="trk__fail-body">{failedMessage}</div>
+                </div>
+              )}
+
+            </div>
+          )}
+
         </Col>
       </Row>
     </Container>
@@ -785,139 +564,67 @@ export default JobStatus;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Convert raw backend error strings into user-friendly messages.
- * Catches common patterns (OOM, subprocess failures, timeouts, missing data)
- * and replaces them with actionable, non-technical text.
- */
 function sanitiseErrorForUser(raw) {
-  if (!raw || typeof raw !== 'string') {
+  if (!raw || typeof raw !== 'string')
     return 'An unexpected error occurred while processing your job. Please try again or contact support.';
-  }
-
   const lower = raw.toLowerCase();
-
-  // Memory / OOM
-  if (
-    lower.includes('out of memory') ||
-    lower.includes('memory') ||
-    lower.includes('oom') ||
-    lower.includes('sigkill') ||
-    lower.includes('killed') ||
-    lower.includes('ram') ||
-    lower.includes('returncode == 137') ||
-    lower.includes('exit status 137') ||
-    lower.includes('returncode == -9') ||
-    lower.includes('exit status -9')
-  ) {
-    return (
-      'The prediction model ran out of memory while processing your data. ' +
-      'This usually happens with very large or numerous protein sequences. ' +
-      'Try reducing the number of rows or the length of your sequences and resubmit.'
-    );
-  }
-
-  // Subprocess / non-zero exit (the exact issue the user reported)
-  if (
-    lower.includes('returned non-zero exit status') ||
-    lower.includes('calledprocesserror') ||
-    lower.includes('non-zero exit')
-  ) {
-    return (
-      'The prediction model encountered an internal error and could not complete. ' +
-      'This may be caused by unusually long sequences, unsupported characters in your input, ' +
-      'or a temporary resource issue. Please verify your input data and try again.'
-    );
-  }
-
-  // Timeout
-  if (lower.includes('timeout') || lower.includes('timed out')) {
-    return (
-      'The prediction timed out. Your input may be too large for the selected model. ' +
-      'Try reducing the number of rows and resubmitting.'
-    );
-  }
-
-  // Missing columns
-  if (lower.includes('missing column')) {
-    return (
-      'Your input file is missing one or more required columns. ' +
-      'Please check the expected CSV format and resubmit.'
-    );
-  }
-
-  // Failed to read CSV
-  if (lower.includes('failed to read input csv')) {
-    return (
-      'The uploaded CSV file could not be read. ' +
-      'Please ensure it is a valid CSV file and try again.'
-    );
-  }
-
-  // If the message already looks clean (no paths, exit codes, tracebacks),
-  // return it as-is. Otherwise fall back to a generic message.
+  if (lower.includes('out of memory') || lower.includes('oom') || lower.includes('sigkill') ||
+      lower.includes('killed') || lower.includes('returncode == 137') || lower.includes('exit status 137') ||
+      lower.includes('returncode == -9') || lower.includes('exit status -9'))
+    return 'The prediction model ran out of memory while processing your data. Try reducing the number of rows or the length of your sequences and resubmit.';
+  if (lower.includes('returned non-zero exit status') || lower.includes('calledprocesserror') || lower.includes('non-zero exit'))
+    return 'The prediction model encountered an internal error and could not complete. Please verify your input data and try again.';
+  if (lower.includes('timeout') || lower.includes('timed out'))
+    return 'The prediction timed out. Try reducing the number of rows and resubmitting.';
+  if (lower.includes('missing column'))
+    return 'Your input file is missing one or more required columns. Please check the expected CSV format and resubmit.';
+  if (lower.includes('failed to read input csv'))
+    return 'The uploaded CSV file could not be read. Please ensure it is a valid CSV file and try again.';
   const hasInternalDetails =
-    /\/[a-z_/]+\.[a-z]+/i.test(raw) ||  // file paths
-    /exit status/i.test(raw) ||           // exit codes
-    /traceback/i.test(raw) ||             // Python tracebacks
-    /\bFile "/.test(raw);                 // Python stack frames
-
-  if (hasInternalDetails) {
-    return (
-      'The prediction model encountered an unexpected error. ' +
-      'Please verify your input data and try again. If the problem persists, contact support.'
-    );
-  }
-
-  // Message looks user-safe — pass it through
+    /\/[a-z_/]+\.[a-z]+/i.test(raw) || /exit status/i.test(raw) || /traceback/i.test(raw) || /\bFile "/.test(raw);
+  if (hasInternalDetails)
+    return 'The prediction model encountered an unexpected error. Please verify your input data and try again. If the problem persists, contact support.';
   return raw;
 }
 
 function formatPredictionStageStatus(state) {
-  const normalized = String(state || '').toLowerCase();
-  if (normalized === 'running') return 'Running';
-  if (normalized === 'completed') return 'Completed';
-  if (normalized === 'failed') return 'Failed';
-  if (normalized === 'pending') return 'Pending';
-  return humanizeState(normalized || 'pending');
+  const s = String(state || '').toLowerCase();
+  if (s === 'running') return 'Running';
+  if (s === 'completed') return 'Completed';
+  if (s === 'failed') return 'Failed';
+  if (s === 'pending') return 'Pending';
+  return humanizeState(s || 'pending');
 }
 
 function formatEmbeddingState(state) {
-  const normalized = String(state || '').toLowerCase();
-  if (normalized === 'done') return 'Completed';
-  if (normalized === 'running') return 'Running';
-  if (normalized === 'error') return 'Error';
-  if (normalized === 'not_required') return 'Not Required';
-  if (normalized === 'pending') return 'Pending';
-  return humanizeState(normalized || 'pending');
+  const s = String(state || '').toLowerCase();
+  if (s === 'done') return 'Completed';
+  if (s === 'running') return 'Running';
+  if (s === 'error') return 'Error';
+  if (s === 'not_required') return 'Not Required';
+  if (s === 'pending') return 'Pending';
+  return humanizeState(s || 'pending');
 }
 
 function humanizeState(value) {
-  const text = String(value || '')
-    .replace(/_/g, ' ')
-    .trim();
-  if (!text) return 'Pending';
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  const t = String(value || '').replace(/_/g, ' ').trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Pending';
 }
 
 function buildLegacyStages(jobStatus, metrics) {
-  const stageStatus =
-    jobStatus?.status === 'Completed' ? 'completed'
-    : jobStatus?.status === 'Failed' ? 'failed'
-    : jobStatus?.status === 'Processing' ? 'running'
-    : 'pending';
-
+  const globalStatus =
+    jobStatus?.status === 'Completed' ? 'completed' :
+    jobStatus?.status === 'Failed' ? 'failed' :
+    jobStatus?.status === 'Processing' ? 'running' : 'pending';
   const targets = parsePredictionTargets(jobStatus?.prediction_type);
   const safeTargets = targets.length > 0 ? targets : ['Prediction'];
-
   return safeTargets.map((target, index) => {
     const isPrimary = index === 0;
     return {
-      index,
-      target,
+      index, target,
       method_name: legacyMethodForTarget(target, jobStatus),
       method_key: '',
-      status: legacyStageStatusForIndex(stageStatus, index),
+      status: legacyStageStatusForIndex(globalStatus, index),
       prediction: {
         molecules_total: isPrimary ? (metrics.totalMolecules || 0) : 0,
         molecules_processed: isPrimary ? (metrics.moleculesProcessed || 0) : 0,
@@ -926,19 +633,10 @@ function buildLegacyStages(jobStatus, metrics) {
         predictions_made: isPrimary ? (metrics.predictionsMade || 0) : 0,
       },
       embedding: isPrimary && metrics.embeddingEnabled
-        ? {
-            enabled: true,
-            state: metrics.embeddingState || 'running',
-            total: metrics.embeddingTotal || 0,
-            cached_already: metrics.embeddingCachedAlready || 0,
-            need_computation: metrics.embeddingNeedComputation || 0,
-            computed: metrics.embeddingComputed || 0,
-            remaining: metrics.embeddingRemaining || 0,
-          }
-        : {
-            enabled: false,
-            state: 'not_required',
-          },
+        ? { enabled: true, state: metrics.embeddingState || 'running', total: metrics.embeddingTotal || 0,
+            cached_already: metrics.embeddingCachedAlready || 0, need_computation: metrics.embeddingNeedComputation || 0,
+            computed: metrics.embeddingComputed || 0, remaining: metrics.embeddingRemaining || 0 }
+        : { enabled: false, state: 'not_required' },
       synthetic: true,
     };
   });
@@ -946,10 +644,7 @@ function buildLegacyStages(jobStatus, metrics) {
 
 function parsePredictionTargets(predictionType) {
   if (!predictionType || typeof predictionType !== 'string') return [];
-  return predictionType
-    .split('+')
-    .map((part) => part.trim())
-    .filter(Boolean);
+  return predictionType.split('+').map(p => p.trim()).filter(Boolean);
 }
 
 function legacyMethodForTarget(target, jobStatus) {
@@ -966,40 +661,26 @@ function legacyStageStatusForIndex(globalStatus, index) {
   return 'pending';
 }
 
-function num(x) {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : 0;
-}
+function num(x) { const n = Number(x); return Number.isFinite(n) ? n : 0; }
+
 function formatDuration(duration) {
   if (!duration) return '';
-  const hours = Math.floor(duration.asHours());
-  const minutes = duration.minutes();
-  const seconds = duration.seconds();
-  return `${hours}h ${pad(minutes)}m ${pad(seconds)}s`;
-}
-function pad(n) {
-  return String(n).padStart(2, '0');
+  const h = Math.floor(duration.asHours());
+  return `${h}h ${pad(duration.minutes())}m ${pad(duration.seconds())}s`;
 }
 
-const TRACK_JOB_ID_STORAGE_KEY = 'trackJob:lastPublicId';
+function pad(n) { return String(n).padStart(2, '0'); }
+
+const STORAGE_KEY = 'trackJob:lastPublicId';
 
 function readStoredTrackJobId() {
   if (typeof window === 'undefined') return '';
-  try {
-    const raw = window.localStorage.getItem(TRACK_JOB_ID_STORAGE_KEY);
-    return typeof raw === 'string' ? raw.trim() : '';
-  } catch {
-    return '';
-  }
+  try { const r = window.localStorage.getItem(STORAGE_KEY); return typeof r === 'string' ? r.trim() : ''; } catch { return ''; }
 }
 
 function writeStoredTrackJobId(value) {
   if (typeof window === 'undefined') return;
   const id = String(value || '').trim();
   if (!id) return;
-  try {
-    window.localStorage.setItem(TRACK_JOB_ID_STORAGE_KEY, id);
-  } catch {
-    // ignore storage failures
-  }
+  try { window.localStorage.setItem(STORAGE_KEY, id); } catch {}
 }
