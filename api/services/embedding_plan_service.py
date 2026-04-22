@@ -324,6 +324,7 @@ def _step_plans_for_profile(
     target: str,
     seq_ids: list[str],
     media_path: Path,
+    env: dict | None = None,
     full_expected_paths: dict[str, set[str]] | None = None,
 ) -> list[EmbeddingStepPlan]:
     if profile == "eitlem_esm1v":
@@ -383,8 +384,32 @@ def _step_plans_for_profile(
         bs_pred_path = media_path / "pseq2sites" / "binding_sites_all.tsv"
         seen_ids = _load_binding_site_ids(bs_pred_path)
         missing_bs = {sid for sid in seq_ids if sid not in seen_ids}
+        plan_env = env or {}
+        raw = str(plan_env.get("KINFORM_PARALLEL_EMBED_ENABLE", "1")).strip().lower()
+        parallel_enabled = raw not in {"0", "false", "no", "off"}
+
+        if parallel_enabled:
+            if full_expected_paths is None:
+                full_expected_paths = {}
+            missing_any_path = {
+                sid
+                for sid, paths in full_expected_paths.items()
+                if any(not Path(p).exists() for p in paths)
+            }
+            orchestrated_sids = sorted(missing_any_path | missing_bs)
+            return [
+                EmbeddingStepPlan(
+                    step_key="kinform_t5_full",
+                    missing_seq_ids=orchestrated_sids,
+                    required_paths_by_seq={
+                        sid: full_expected_paths.get(sid, set()) for sid in orchestrated_sids
+                    },
+                )
+            ]
+
         missing_t5 = {
-            sid for sid, paths in prott5_paths.items()
+            sid
+            for sid, paths in prott5_paths.items()
             if any(not Path(p).exists() for p in paths)
         }
         t5_full_sids = sorted(missing_bs | missing_t5)
@@ -443,6 +468,7 @@ def build_embedding_plan(
         target=target,
         seq_ids=seq_ids,
         media_path=media_path,
+        env=env,
         full_expected_paths=expected,
     )
 

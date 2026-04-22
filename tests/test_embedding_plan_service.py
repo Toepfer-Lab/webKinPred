@@ -17,7 +17,7 @@ def _touch(path: Path) -> None:
 
 
 class EmbeddingPlanServiceTests(unittest.TestCase):
-    def test_kinform_mixed_state_sparse_steps(self):
+    def test_kinform_mixed_state_sparse_steps_parallel_single_step(self):
         with tempfile.TemporaryDirectory(prefix="emb_plan_kinform_") as tmp:
             tmp_path = Path(tmp)
             media = tmp_path / "media"
@@ -71,13 +71,57 @@ class EmbeddingPlanServiceTests(unittest.TestCase):
             self.assertEqual(plan.cached_already, 28)
             self.assertEqual(plan.need_computation, 8)
 
-            step_keys = [s.step_key for s in plan.step_plans]
-            self.assertNotIn("kinform_pseq2sites", step_keys)
-            self.assertNotIn("kinform_prott5_layers", step_keys)
-
+            self.assertEqual([step.step_key for step in plan.step_plans], ["kinform_t5_full"])
             by_step = {step.step_key: set(step.missing_seq_ids) for step in plan.step_plans}
-            # sid_3: missing T5 embeddings AND binding site row
-            # sid_2: has all T5 + binding sites, not in t5_full
+            # Parallel mode emits a single orchestrated KinForm step.
+            self.assertEqual(by_step["kinform_t5_full"], {"sid_2", "sid_3"})
+
+    def test_kinform_legacy_sparse_steps_when_parallel_disabled(self):
+        with tempfile.TemporaryDirectory(prefix="emb_plan_kinform_legacy_") as tmp:
+            tmp_path = Path(tmp)
+            media = tmp_path / "media"
+            tools = tmp_path / "tools"
+            seq_ids = ["sid_1", "sid_2", "sid_3"]
+
+            kin_roots = [
+                "esm2_layer_26",
+                "esm2_layer_29",
+                "esmc_layer_24",
+                "esmc_layer_32",
+                "prot_t5_layer_19",
+                "prot_t5_last",
+            ]
+            for sid in seq_ids:
+                for root in kin_roots:
+                    _touch(media / "sequence_info" / root / "mean_vecs" / f"{sid}.npy")
+                    _touch(media / "sequence_info" / root / "weighted_vecs" / f"{sid}.npy")
+
+            for root in ["esm2_layer_26", "esm2_layer_29"]:
+                (media / "sequence_info" / root / "mean_vecs" / "sid_2.npy").unlink()
+                (media / "sequence_info" / root / "weighted_vecs" / "sid_2.npy").unlink()
+
+            for root in ["prot_t5_layer_19", "prot_t5_last"]:
+                (media / "sequence_info" / root / "mean_vecs" / "sid_3.npy").unlink()
+                (media / "sequence_info" / root / "weighted_vecs" / "sid_3.npy").unlink()
+
+            bs_path = media / "pseq2sites" / "binding_sites_all.tsv"
+            bs_path.parent.mkdir(parents=True, exist_ok=True)
+            bs_path.write_text("PDB\tscore\n" "sid_1\t0.9\n" "sid_2\t0.2\n", encoding="utf-8")
+
+            with patch.object(eps, "resolve_media_and_tools", return_value=(media, tools)):
+                with patch.object(eps, "resolve_seq_ids_via_cli", return_value=seq_ids):
+                    plan = eps.build_embedding_plan(
+                        method_key="KinForm-H",
+                        target="kcat",
+                        sequences=["SEQ1", "SEQ2", "SEQ3"],
+                        env={"KINFORM_PARALLEL_EMBED_ENABLE": "0"},
+                    )
+
+            step_keys = [s.step_key for s in plan.step_plans]
+            self.assertIn("kinform_t5_full", step_keys)
+            self.assertIn("kinform_esm2_layers", step_keys)
+            self.assertIn("kinform_esmc_layers", step_keys)
+            by_step = {step.step_key: set(step.missing_seq_ids) for step in plan.step_plans}
             self.assertEqual(by_step["kinform_t5_full"], {"sid_3"})
             self.assertEqual(by_step["kinform_esm2_layers"], {"sid_2"})
             self.assertEqual(by_step["kinform_esmc_layers"], set())

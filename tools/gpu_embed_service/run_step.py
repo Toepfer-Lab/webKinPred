@@ -51,6 +51,18 @@ def _parse_seq_ids(raw: str) -> list[str]:
     return [sid.strip() for sid in raw.split(",") if sid.strip()]
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _load_seq_id_to_seq(seq_ids: list[str], seqmap_db: Path) -> dict[str, str]:
     _ensure_exists(seqmap_db, "seqmap DB")
     if not seq_ids:
@@ -223,7 +235,7 @@ def _run_kinform_t5(
     _run(cmd, env)
 
 
-def _run_kinform_t5_full(
+def _run_kinform_t5_full_legacy_only(
     env: dict[str, str],
     seq_file: Path,
     id_to_seq_pkl: Path,
@@ -265,6 +277,55 @@ def _run_kinform_t5_full(
         ],
         env,
     )
+
+
+def _run_kinform_t5_full_legacy_with_esm(
+    env: dict[str, str],
+    seq_file: Path,
+    id_to_seq_pkl: Path,
+    seq_map_json: Path,
+) -> None:
+    _run_kinform_t5_full_legacy_only(env, seq_file, id_to_seq_pkl, seq_map_json)
+    _run_kinform_esm2(env, seq_file, id_to_seq_pkl)
+    _run_kinform_esmc(env, seq_file, id_to_seq_pkl)
+
+
+def _run_kinform_t5_full(
+    env: dict[str, str],
+    seq_file: Path,
+    id_to_seq_pkl: Path,
+    seq_map_json: Path,
+    *,
+    seq_id_to_seq: dict[str, str],
+    job_id: str | None = None,
+) -> None:
+    parallel_enabled = _env_bool("KINFORM_PARALLEL_EMBED_ENABLE", True)
+    allow_fallback = _env_bool("KINFORM_PARALLEL_EMBED_ALLOW_LEGACY_FALLBACK", True)
+
+    if not parallel_enabled:
+        _run_kinform_t5_full_legacy_only(env, seq_file, id_to_seq_pkl, seq_map_json)
+        return
+
+    from kinform_parallel_orchestrator import run_kinform_parallel_pipeline
+
+    try:
+        run_kinform_parallel_pipeline(
+            env=env,
+            repo_root=Path(env["GPU_REPO_ROOT"]).resolve(),
+            media_path=Path(env["KINFORM_MEDIA_PATH"]).resolve(),
+            seq_id_to_seq=seq_id_to_seq,
+            job_id=job_id,
+        )
+        return
+    except Exception as exc:
+        if not allow_fallback:
+            raise
+        print(
+            "KINFORM_PARALLEL_FALLBACK "
+            f"job_id={job_id or 'unknown'} "
+            f"reason={exc.__class__.__name__}:{exc}"
+        )
+        _run_kinform_t5_full_legacy_with_esm(env, seq_file, id_to_seq_pkl, seq_map_json)
 
 
 def _run_turnup(env: dict[str, str], seq_map_json: Path) -> None:
@@ -471,6 +532,7 @@ def run_step(
     tools_path: Path,
     *,
     seq_id_to_seq: dict[str, str] | None = None,
+    job_id: str | None = None,
 ) -> None:
     if not seq_ids:
         print("No sequence IDs provided; nothing to do.")
@@ -489,7 +551,14 @@ def run_step(
 
     try:
         if step == "kinform_t5_full":
-            _run_kinform_t5_full(env, seq_file, id_to_seq_pkl, seq_map_json)
+            _run_kinform_t5_full(
+                env,
+                seq_file,
+                id_to_seq_pkl,
+                seq_map_json,
+                seq_id_to_seq=seq_id_to_seq,
+                job_id=job_id,
+            )
         elif step == "kinform_esm2_layers":
             _run_kinform_esm2(env, seq_file, id_to_seq_pkl)
         elif step == "kinform_esmc_layers":

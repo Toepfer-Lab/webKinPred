@@ -139,7 +139,13 @@ def _run_command(cmd: str) -> None:
         )
 
 
-def _execute_step(step_key: str, seq_ids: list[str], seq_id_to_seq: dict[str, str]) -> None:
+def _execute_step(
+    step_key: str,
+    seq_ids: list[str],
+    seq_id_to_seq: dict[str, str],
+    *,
+    job_id: str | None = None,
+) -> None:
     # If an override command is configured, use it.
     # Available format args: {step_key}, {seq_ids}, {seq_count}, {seq_id_to_seq_file}
     env_key = f"GPU_EMBED_STEP_CMD_{step_key.upper()}"
@@ -185,6 +191,7 @@ def _execute_step(step_key: str, seq_ids: list[str], seq_id_to_seq: dict[str, st
         media_path=media_path,
         tools_path=tools_path,
         seq_id_to_seq=seq_id_to_seq or None,
+        job_id=job_id,
     )
 
 
@@ -200,7 +207,7 @@ def _run_job(job_id: str) -> None:
         for step_key, seq_ids in req.step_work.items():
             if not seq_ids:
                 continue
-            _execute_step(step_key, seq_ids, req.seq_id_to_seq)
+            _execute_step(step_key, seq_ids, req.seq_id_to_seq, job_id=job_id)
 
         with _jobs_lock:
             state.status = "done"
