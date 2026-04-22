@@ -34,7 +34,7 @@
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(255, 255, 255, 0.55);
   margin-bottom: 8px;
 }
 
@@ -52,7 +52,7 @@
   outline: none;
   transition: border-color 0.15s, background 0.15s;
 }
-.trk-search__input::placeholder { color: rgba(255, 255, 255, 0.22); }
+.trk-search__input::placeholder { color: rgba(255, 255, 255, 0.38); }
 .trk-search__input:focus {
   border-color: rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.06);
@@ -116,7 +116,7 @@
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.50);
   line-height: 1;
 }
 
@@ -142,7 +142,7 @@
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.60);
   padding: 4px 6px;
   cursor: pointer;
   line-height: 1;
@@ -195,7 +195,7 @@
   background: rgba(248, 113, 113, 0.06);
 }
 .trk__status--pending {
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(255, 255, 255, 0.55);
   border-color: rgba(255, 255, 255, 0.14);
 }
 
@@ -225,7 +225,7 @@
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.50);
   line-height: 1;
 }
 
@@ -241,7 +241,7 @@
 .trk__clock-sub {
   font-family: 'Roboto', sans-serif;
   font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.42);
   margin-top: 1px;
 }
 
@@ -268,7 +268,7 @@
   display: block;
   width: 5px; height: 5px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.48);
   animation: dot-bounce 1.4s ease-in-out infinite;
 }
 .trk__pending-dots span:nth-child(2) { animation-delay: 0.18s; }
@@ -282,9 +282,9 @@
 .trk__pending-txt {
   font-family: 'Roboto', sans-serif;
   font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.48);
+  color: rgba(255, 255, 255, 0.62);
 }
-.trk__pending-pos { color: rgba(255, 255, 255, 0.82); font-weight: 700; }
+.trk__pending-pos { color: rgba(255, 255, 255, 0.88); font-weight: 700; }
 
 /* ── Section wrapper ────────────────────────────────────────────────────── */
 .trk__section { border-top: 1px solid rgba(255, 255, 255, 0.08); }
@@ -305,7 +305,7 @@
   font-weight: 700;
   letter-spacing: 0.11em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.36);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 /* ── Status chips ───────────────────────────────────────────────────────── */
@@ -316,7 +316,7 @@
   font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 3px;
   padding: 2px 7px;
@@ -325,13 +325,13 @@
 .trk__chip--ok  { color: #4ade80; border-color: rgba(74, 222, 128, 0.28);  background: rgba(74, 222, 128, 0.05); }
 .trk__chip--run { color: #60a5fa; border-color: rgba(96, 165, 250, 0.28);  background: rgba(96, 165, 250, 0.05); }
 .trk__chip--err { color: #f87171; border-color: rgba(248, 113, 113, 0.28); background: rgba(248, 113, 113, 0.05); }
-.trk__chip--dim { color: rgba(255, 255, 255, 0.32); border-color: rgba(255, 255, 255, 0.09); }
+.trk__chip--dim { color: rgba(255, 255, 255, 0.52); border-color: rgba(255, 255, 255, 0.09); }
 
 /* ── Empty state ────────────────────────────────────────────────────────── */
 .trk__empty {
   font-family: 'Roboto', sans-serif;
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.50);
   padding: 20px 16px;
   text-align: center;
 }
@@ -384,7 +384,7 @@
   font-family: 'Roboto Mono', monospace;
   font-size: 0.63rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.42);
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
@@ -404,7 +404,7 @@
   font-family: 'Roboto', sans-serif;
   font-size: 0.63rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.50);
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 3px;
@@ -424,7 +424,7 @@
 .trk__stage-dur {
   font-family: 'Roboto Mono', monospace;
   font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.26);
+  color: rgba(255, 255, 255, 0.48);
   letter-spacing: 0.02em;
 }
 
@@ -443,7 +443,7 @@
 .trk__state--running   { color: #60a5fa; border-color: rgba(96, 165, 250, 0.35);  background: rgba(96, 165, 250, 0.07); }
 .trk__state--completed { color: #4ade80; border-color: rgba(74, 222, 128, 0.35);  background: rgba(74, 222, 128, 0.07); }
 .trk__state--failed    { color: #f87171; border-color: rgba(248, 113, 113, 0.35); background: rgba(248, 113, 113, 0.07); }
-.trk__state--pending   { color: rgba(255, 255, 255, 0.28); border-color: rgba(255, 255, 255, 0.1); background: transparent; }
+.trk__state--pending   { color: rgba(255, 255, 255, 0.50); border-color: rgba(255, 255, 255, 0.1); background: transparent; }
 
 /* ════════════════════════════════════════════════════════════════════════════
    Prediction progress block
@@ -477,14 +477,14 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.26);
+  color: rgba(255, 255, 255, 0.50);
 }
 
 .trk__pred-meta-v {
   font-family: 'Roboto Mono', monospace;
   font-size: 0.82rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .trk__pred-meta-item--warn .trk__pred-meta-v { color: #fbbf24; }
@@ -519,7 +519,7 @@
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.45);
   text-align: right;
   white-space: nowrap;
 }
@@ -564,7 +564,7 @@
 .trk__prog-frac {
   font-family: 'Roboto Mono', monospace;
   font-size: 0.67rem;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(255, 255, 255, 0.55);
   white-space: nowrap;
   text-align: right;
 }
@@ -574,7 +574,7 @@
   font-family: 'Roboto Mono', monospace;
   font-size: 0.68rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.48);
+  color: rgba(255, 255, 255, 0.65);
   text-align: right;
 }
 
@@ -610,14 +610,14 @@
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.26);
+  color: rgba(255, 255, 255, 0.50);
 }
 
 /* Placeholder shown for pending stages — avoids showing misleading zeros */
 .trk__emb-block-queued {
   font-family: 'Roboto', sans-serif;
   font-size: 0.73rem;
-  color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.42);
   font-style: italic;
 }
 
@@ -639,7 +639,7 @@
 
 .trk__emb-eq-op {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.30);
   font-weight: 400;
 }
 
@@ -647,7 +647,7 @@
   font-family: 'Roboto Mono', monospace;
   font-size: 0.82rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.48);
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .trk__emb-eq-lbl {
@@ -655,12 +655,12 @@
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.40);
 }
 
 /* Total part is slightly brighter — it's the headline number */
-.trk__emb-eq-part--total .trk__emb-eq-val { color: rgba(255, 255, 255, 0.72); }
-.trk__emb-eq-part--total .trk__emb-eq-lbl { color: rgba(255, 255, 255, 0.28); }
+.trk__emb-eq-part--total .trk__emb-eq-val { color: rgba(255, 255, 255, 0.82); }
+.trk__emb-eq-part--total .trk__emb-eq-lbl { color: rgba(255, 255, 255, 0.52); }
 
 /* ── Embedding live progress (computed + remaining, ticks every poll) ───── */
 .trk__emb-live {
@@ -673,7 +673,7 @@
 .trk__emb-remaining {
   font-family: 'Roboto Mono', monospace;
   font-size: 0.65rem;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.50);
   /* 68px label width + 8px gap = 76px indent, aligning text under the track */
   padding-left: 76px;
 }
@@ -697,7 +697,7 @@
   gap: 8px;
   font-family: 'Roboto', sans-serif;
   font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.68);
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .trk__done-icon { color: #4ade80; flex-shrink: 0; }
@@ -759,7 +759,7 @@
 .trk__fail-body {
   font-family: 'Roboto', sans-serif;
   font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.68);
   line-height: 1.55;
   padding-left: 22px;
 }
@@ -774,6 +774,4 @@
   /* On small screens, hide the fraction to save space; label+track+pct still readable */
   .trk__prog-frac { display: none; }
   .trk__prog { grid-template-columns: 60px 1fr 34px; }
-
-  .trk__emb-stats { row-gap: 7px; }
 }
