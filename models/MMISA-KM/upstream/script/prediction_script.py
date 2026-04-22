@@ -366,6 +366,8 @@ def _predict_rows(
     if not valid_global_indices:
         return predictions, sorted(set(invalid_indices))
 
+    ##ToDo : Cuda device designation (e.g. cuda:0 vs cuda:1)
+    
     # Setup device and load model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Running inference on {device}")

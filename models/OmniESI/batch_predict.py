@@ -55,6 +55,8 @@ from utils import set_seed  # noqa: E402
 from configs import get_cfg_defaults  # noqa: E402
 from scripts.embedding import ESM_model  # noqa: E402
 
+##ToDo : Cuda device designation (e.g. cuda:0 vs cuda:1)
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 SEED_LIST = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
 
