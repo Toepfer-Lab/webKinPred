@@ -128,7 +128,7 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
 FROM base AS env-omniesi
 COPY docker-requirements/omniesi_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
-    --mount=type=cache,id=webkinpred-pip-py39,target=/root/.cache/pip,sharing=locked \
+    --mount=type=cache,id=webkinpred-pip-py38,target=/root/.cache/pip,sharing=locked \
     mamba create -n omniesi_env python=3.8 -c conda-forge -y \
     && mamba install -n omniesi_env -c conda-forge rdkit=2024.03.6 -y \
     && conda run -n omniesi_env pip install -r docker-requirements/omniesi_requirements.txt
