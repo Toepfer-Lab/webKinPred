@@ -124,6 +124,15 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     && mamba install -n mmisakm_env -c conda-forge rdkit=2022.9.5 -y \
     && conda run -n mmisakm_env pip install -r docker-requirements/mmisakm_requirements.txt
 
+    # ── OmniESI ──────────────────────────────────────────────────────────────────
+FROM base AS env-omniesi
+COPY docker-requirements/omniesi_requirements.txt ./docker-requirements/
+RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
+    --mount=type=cache,id=webkinpred-pip-py39,target=/root/.cache/pip,sharing=locked \
+    mamba create -n omniesi_env python=3.8 -c conda-forge -y \
+    && mamba install -n omniesi_env -c conda-forge rdkit=2024.03.6 -y \
+    && conda run -n omniesi_env pip install -r docker-requirements/omniesi_requirements.txt
+
 # ── pseq2sites ────────────────────────────────────────────────────────────────
 FROM base AS env-pseq2sites
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
@@ -175,6 +184,7 @@ COPY --from=env-unikp     /opt/conda/envs/unikp        /opt/conda/envs/unikp
 COPY --from=env-catapro   /opt/conda/envs/catapro_env  /opt/conda/envs/catapro_env
 COPY --from=env-catpred   /opt/conda/envs/catpred_env  /opt/conda/envs/catpred_env
 COPY --from=env-mmisakm   /opt/conda/envs/mmisakm_env  /opt/conda/envs/mmisakm_env
+COPY --from=env-omniesi   /opt/conda/envs/omniesi_env  /opt/conda/envs/omniesi_env
 COPY --from=env-pseq2sites /opt/conda/envs/pseq2sites  /opt/conda/envs/pseq2sites
 COPY --from=env-esm       /opt/conda/envs/esm          /opt/conda/envs/esm
 COPY --from=env-esmc      /opt/conda/envs/esmc         /opt/conda/envs/esmc
