@@ -150,17 +150,6 @@ def main() -> None:
 
     seq_ids = resolve_seq_ids_via_cli(sequences)
 
-    # Load EITLEM prediction model (CPU only).
-    if kinetics_type == "KCAT":
-        eitlem_model = EitlemKcatPredictor(167, 512, 1280, 10, 0.5, 10)
-    else:
-        eitlem_model = EitlemKmPredictor(167, 512, 1280, 10, 0.5, 10)
-
-    eitlem_model.load_state_dict(
-        torch.load(_WEIGHT_PATHS[kinetics_type], map_location=torch.device("cpu"))
-    )
-    eitlem_model.eval()
-
     # ── Phase 1: ensure all ESM1v embeddings are on disk ─────────────────────
     # GPU case: files already written by the GPU server before this script runs.
     # CPU fallback: compute them now with ESM1v loaded once, then free the model
@@ -173,8 +162,19 @@ def main() -> None:
             np.save(str(path), rep)
     _free_esm()
 
-    # ── Phase 2: batched GNN inference, loading embeddings from disk ──────────
-    _BATCH_SIZE = 32
+    # Load EITLEM prediction model only after ESM1v has been freed.
+    if kinetics_type == "KCAT":
+        eitlem_model = EitlemKcatPredictor(167, 512, 1280, 10, 0.5, 10)
+    else:
+        eitlem_model = EitlemKmPredictor(167, 512, 1280, 10, 0.5, 10)
+
+    eitlem_model.load_state_dict(
+        torch.load(_WEIGHT_PATHS[kinetics_type], map_location=torch.device("cpu"))
+    )
+    eitlem_model.eval()
+
+    # ── Phase 2: GNN inference, one sample at a time ─────────────────────────
+    _BATCH_SIZE = 1
     total = len(sequences)
     predictions: list[float | None] = [None] * total
 
