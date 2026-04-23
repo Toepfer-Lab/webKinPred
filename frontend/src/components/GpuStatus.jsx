@@ -99,24 +99,31 @@ export default function GpuStatus({ layout = 'home' }) {
                     </p>
 
                     <Table responsive size="sm" className="benchmark-table mb-0">
+                      <colgroup>
+                        <col className="benchmark-col-method" />
+                        <col className="benchmark-col-gpu" />
+                        <col className="benchmark-col-cpu" />
+                        <col className="benchmark-col-cached" />
+                      </colgroup>
                       <thead>
                         <tr>
-                          <th rowSpan={2}>Method</th>
+                          <th rowSpan={2} className="benchmark-th-method">Method</th>
                           <th colSpan={2} className="benchmark-th-group">PLM embeddings not cached</th>
-                          <th rowSpan={2}>PLM embeddings cached</th>
+                          <th className="benchmark-th-group benchmark-th-cached">PLM embeddings cached</th>
                         </tr>
                         <tr>
-                          <th>GPU</th>
-                          <th>CPU</th>
+                          <th className="benchmark-th-sub">GPU</th>
+                          <th className="benchmark-th-sub">CPU</th>
+                          <th className="benchmark-th-sub benchmark-th-sub-placeholder" aria-hidden="true">&nbsp;</th>
                         </tr>
                       </thead>
                       <tbody>
                         {BENCHMARK_DATA.map(({ method, uncachedGpu, uncachedCpu, cached }) => (
                           <tr key={method}>
                             <td className="benchmark-method">{method}</td>
-                            <td className={uncachedGpu ? '' : 'benchmark-empty'}>{uncachedGpu || '—'}</td>
-                            <td>{uncachedCpu ?? '—'}</td>
-                            <td className={cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}>
+                            <td className={`benchmark-time ${uncachedGpu ? '' : 'benchmark-empty'}`}>{uncachedGpu || '—'}</td>
+                            <td className="benchmark-time">{uncachedCpu ?? '—'}</td>
+                            <td className={`benchmark-time ${cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}`}>
                               {cached ?? '—'}
                             </td>
                           </tr>

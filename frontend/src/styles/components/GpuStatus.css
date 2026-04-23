@@ -89,6 +89,13 @@
 }
 
 .gpu-status-alert .benchmark-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 0.5rem;
+  overflow: hidden;
   font-size: 0.76rem;
   margin-top: 0.35rem;
   --bs-table-bg: transparent;
@@ -102,14 +109,18 @@
 
 .gpu-status-alert .benchmark-table thead tr th,
 .gpu-status-alert .benchmark-table thead tr th * {
-  font-size: 0.65rem;
+  font-size: 0.63rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  white-space: nowrap;
+  white-space: normal;
   background: rgba(15, 23, 42, 0.08) !important;
   background-color: rgba(15, 23, 42, 0.08) !important;
   color: #0f172a !important;
   border-color: rgba(15, 23, 42, 0.2) !important;
+  vertical-align: middle !important;
+  text-align: center;
+  line-height: 1.2;
+  padding: 0.44rem 0.55rem;
 }
 
 .gpu-status-alert .benchmark-table tbody tr td,
@@ -119,6 +130,8 @@
   border-color: rgba(15, 23, 42, 0.12) !important;
   background: transparent !important;
   background-color: transparent !important;
+  padding: 0.42rem 0.55rem;
+  line-height: 1.2;
 }
 
 .gpu-status-alert .benchmark-table tbody tr:hover td {
@@ -128,6 +141,38 @@
 
 .gpu-status-alert .benchmark-th-group {
   text-align: center;
+  font-weight: 700;
+}
+
+.gpu-status-alert .benchmark-th-method {
+  text-align: left !important;
+  font-weight: 700;
+  vertical-align: middle !important;
+}
+
+.gpu-status-alert .benchmark-th-cached {
+  text-align: center !important;
+  font-weight: 700;
+}
+
+.gpu-status-alert .benchmark-th-sub {
+  text-align: center !important;
+  font-weight: 700;
+}
+
+.gpu-status-alert .benchmark-th-sub-placeholder {
+  color: transparent !important;
+  user-select: none;
+}
+
+.gpu-status-alert .benchmark-col-method {
+  width: 30%;
+}
+
+.gpu-status-alert .benchmark-col-gpu,
+.gpu-status-alert .benchmark-col-cpu,
+.gpu-status-alert .benchmark-col-cached {
+  width: 23.333%;
 }
 
 .gpu-status-alert .benchmark-method {
@@ -135,6 +180,15 @@
   font-size: 0.73rem;
   font-weight: 600;
   color: #0f172a !important;
+  text-align: left;
+  letter-spacing: 0.01em;
+}
+
+.gpu-status-alert .benchmark-time {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  white-space: nowrap;
 }
 
 .gpu-status-alert .benchmark-empty {
@@ -162,5 +216,10 @@
   .gpu-status-meta,
   .gpu-status-conditions {
     gap: 0.2rem;
+  }
+
+  .gpu-status-alert .benchmark-table {
+    table-layout: auto;
+    font-size: 0.72rem;
   }
 }
