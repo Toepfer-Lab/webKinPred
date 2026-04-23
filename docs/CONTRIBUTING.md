@@ -153,7 +153,7 @@ Return:
 
 ## 3. Register Runtime Paths
 
-If your method needs a new Python environment, you must update the full worker image `Dockerfile` (not `Dockerfile.web`).
+If your method needs a new Python environment, you must update the full worker image `Dockerfile.envs`.
 
 1. Add a requirements file:
 
@@ -161,7 +161,7 @@ If your method needs a new Python environment, you must update the full worker i
 docker-requirements/your_method_requirements.txt
 ```
 
-2. Add a parallel env stage in `Dockerfile`.
+2. Add a parallel env stage in `Dockerfile.envs`.
 
 The Dockerfile uses multi-stage builds so all envs are built in parallel by BuildKit. Add two things:
 
@@ -311,7 +311,7 @@ Existing PLM caches:
   - The pooled tensor is deterministic for `(seq_id, checkpoint_key)`.
   - Persist `catpred_esm2/{parameter}/{model_key}/{seq_id}.pt`.
 - EITLEM example
-  - EITLEM consumes a full residue matrix.
+  - EITLEM consumes a full residue matrix and is not sequence-deterministic.
   - Preferred pattern is ephemeral files, run prediction, then delete touched files.
   - See `models/EITLEM/Code/eitlem_prediction_script.py` for this pattern.
 
