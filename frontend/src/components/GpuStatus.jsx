@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Container, Row, Col } from 'react-bootstrap';
+import { Table, Container, Row, Col, Alert } from 'react-bootstrap';
 import { ChevronDown, ChevronUp, Speedometer2 } from 'react-bootstrap-icons';
 import apiClient from './appClient';
 import '../styles/components/GpuStatus.css';
@@ -58,77 +58,75 @@ export default function GpuStatus({ layout = 'home' }) {
       <Container className="gpu-status-container">
         <Row className="justify-content-center">
           <Col md={10} lg={layout === 'track' ? 9 : undefined}>
-            <div className={`gpu-status-card ${isOnline ? 'is-online' : 'is-cpu'}`}>
-              <button
-                className="gpu-status-toggle"
-                onClick={() => setOpen(o => !o)}
-                aria-expanded={open}
-              >
-                <div className="gpu-status-summary">
-                  <div className="gpu-status-line">
-                    <span className={`gpu-status-badge ${isOnline ? 'is-online' : 'is-cpu'}`}>
-                      {isOnline ? 'GPU Available' : 'CPU Mode'}
-                    </span>
-                    <span className="gpu-status-value">
-                      {isOnline ? `${remaining} remaining` : 'GPU currently unavailable'}
-                    </span>
-                  </div>
-                  <div className="gpu-status-meta">
-                    <span className="gpu-status-meta-label">GPU Window</span>
-                    <span className="gpu-status-meta-value">{schedule}</span>
-                  </div>
+            <Alert variant="info" className="d-flex align-items-start gpu-status-alert mb-0">
+              <Speedometer2 size={24} className="me-3 mt-1 gpu-status-icon" />
+              <div className="gpu-status-content">
+                <div className="gpu-status-line">
+                  <strong className="gpu-status-title">{isOnline ? 'GPU Available' : 'CPU Mode'}</strong>
+                  <span className="gpu-status-value">
+                    {isOnline ? `${remaining} remaining` : 'GPU currently unavailable'}
+                  </span>
                 </div>
 
-                <span className="gpu-status-benchmark">
-                  <Speedometer2 size={13} />
-                  Runtime Benchmark
-                  {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                </span>
-              </button>
+                <p className="gpu-status-meta mb-2">
+                  <strong>GPU Window</strong>
+                  <span>Daily 5 PM - 8 AM GMT · 24h on weekends</span>
+                </p>
 
-              {open && (
-                <div className="gpu-status-panel">
-                  <p className="gpu-status-intro">
-                    PLM embeddings are cached server-side. Once a sequence is computed, it is reused across future jobs.
-                    Compute time scales mainly with unique proteins, not total rows.
-                  </p>
-                  <p className="gpu-status-conditions">
-                    Conditions:
-                    <span className="gpu-status-cond-value">1,000 reactions</span>
-                    <span className="gpu-status-cond-sep">·</span>
-                    <span className="gpu-status-cond-value">100 unique proteins</span>
-                    <span className="gpu-status-cond-sep">·</span>
-                    <span className="gpu-status-cond-value">avg. 400 aa</span>
-                  </p>
+                <button
+                  type="button"
+                  className="gpu-status-benchmark-toggle mb-1"
+                  onClick={() => setOpen((v) => !v)}
+                  aria-expanded={open}
+                >
+                  <strong>Runtime Benchmark</strong>
+                  {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
 
-                  <Table size="sm" className="benchmark-table mb-0">
-                    <thead>
-                      <tr>
-                        <th rowSpan={2}>Method</th>
-                        <th colSpan={2} className="benchmark-th-group">PLM embeddings not cached</th>
-                        <th rowSpan={2}>PLM embeddings cached</th>
-                      </tr>
-                      <tr>
-                        <th>GPU</th>
-                        <th>CPU</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {BENCHMARK_DATA.map(({ method, uncachedGpu, uncachedCpu, cached }) => (
-                        <tr key={method}>
-                          <td className="benchmark-method">{method}</td>
-                          <td className={uncachedGpu ? '' : 'benchmark-empty'}>{uncachedGpu || '—'}</td>
-                          <td>{uncachedCpu ?? '—'}</td>
-                          <td className={cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}>
-                            {cached ?? '—'}
-                          </td>
+                {open && (
+                  <>
+                    <p className="gpu-status-intro">
+                      PLM embeddings are cached server-side. Once a sequence is computed, it is reused across future jobs.
+                      Compute time scales mainly with unique proteins, not total rows.
+                    </p>
+                    <p className="gpu-status-conditions">
+                      <strong>Conditions:</strong>
+                      <span className="gpu-status-cond-value">1,000 reactions</span>
+                      <span className="gpu-status-cond-sep">·</span>
+                      <span className="gpu-status-cond-value">100 unique proteins</span>
+                      <span className="gpu-status-cond-sep">·</span>
+                      <span className="gpu-status-cond-value">avg. 400 aa</span>
+                    </p>
+
+                    <Table responsive size="sm" className="benchmark-table mb-0">
+                      <thead>
+                        <tr>
+                          <th rowSpan={2}>Method</th>
+                          <th colSpan={2} className="benchmark-th-group">PLM embeddings not cached</th>
+                          <th rowSpan={2}>PLM embeddings cached</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                </div>
-              )}
-            </div>
+                        <tr>
+                          <th>GPU</th>
+                          <th>CPU</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {BENCHMARK_DATA.map(({ method, uncachedGpu, uncachedCpu, cached }) => (
+                          <tr key={method}>
+                            <td className="benchmark-method">{method}</td>
+                            <td className={uncachedGpu ? '' : 'benchmark-empty'}>{uncachedGpu || '—'}</td>
+                            <td>{uncachedCpu ?? '—'}</td>
+                            <td className={cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}>
+                              {cached ?? '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </Table>
+                  </>
+                )}
+              </div>
+            </Alert>
           </Col>
         </Row>
       </Container>
