@@ -56,6 +56,14 @@ Minimal FastAPI service for remote GPU embedding offload.
   - Default: `/tmp/webkinpred-kinform`
 - `KINFORM_PARALLEL_PSEQ_STREAM_BATCH_SIZE`: Pseq2Sites streaming micro-batch size.
   - Default: `8`
+- `KINFORM_PARALLEL_PSEQ_STREAM_QUEUE_SIZE`: max in-memory queue items for streamed T5 residues inside pseq worker.
+  - Default: `max(32, 8 * batch_size)` (typically `64` with batch size `8`)
+- `KINFORM_PARALLEL_PSEQ_STREAM_IDLE_FLUSH_SECONDS`: flush partial pseq batches when stream goes idle.
+  - Default: `0.2`
+- `KINFORM_PARALLEL_PSEQ_STREAM_PERSIST_EVERY_ROWS`: flush pseq binding-site TSV merge after this many streamed updates.
+  - Default: `64`
+- `KINFORM_PARALLEL_PSEQ_STREAM_PERSIST_EVERY_SECONDS`: max seconds between pseq TSV persistence flushes.
+  - Default: `15`
 - `KINFORM_PARALLEL_STREAM_SOCKET_DIR`: Unix socket directory for orchestrator-worker stream IPC.
   - Default: `/tmp/webkinpred-gpu-embed/kinform`
 

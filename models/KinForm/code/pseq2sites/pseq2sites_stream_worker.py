@@ -344,12 +344,42 @@ def _run_stream_mode(
     finish_received = False
     last_buffer_add = time.monotonic()
     idle_flush_seconds = max(0.05, float(os.environ.get("KINFORM_PARALLEL_PSEQ_STREAM_IDLE_FLUSH_SECONDS", "0.2")))
+    persist_every_rows = max(
+        1,
+        int(os.environ.get("KINFORM_PARALLEL_PSEQ_STREAM_PERSIST_EVERY_ROWS", "64")),
+    )
+    persist_every_seconds = max(
+        0.2,
+        float(os.environ.get("KINFORM_PARALLEL_PSEQ_STREAM_PERSIST_EVERY_SECONDS", "15.0")),
+    )
+    pending_persist_rows: dict[str, str] = {}
+    last_persist = time.monotonic()
+
+    def persist_rows(*, force: bool) -> int:
+        nonlocal pending_persist_rows, last_persist
+        if not pending_persist_rows:
+            return 0
+        now = time.monotonic()
+        if not force:
+            if len(pending_persist_rows) < persist_every_rows and (now - last_persist) < persist_every_seconds:
+                return 0
+        started = time.monotonic()
+        merge_binding_site_rows_atomic(binding_sites_path, pending_persist_rows)
+        wrote = len(pending_persist_rows)
+        pending_persist_rows = {}
+        last_persist = time.monotonic()
+        print(
+            f"PSEQ_STREAM persisted={wrote} cache={binding_sites_path} "
+            f"persist_s={last_persist - started:.3f}"
+        )
+        return wrote
 
     def flush_buffer() -> int:
-        nonlocal buffer_feats, buffer_seqs
+        nonlocal buffer_feats, buffer_seqs, pending_persist_rows
         if not buffer_feats:
             return 0
         ready_map = {sid: buffer_seqs[sid] for sid in buffer_feats}
+        infer_started = time.monotonic()
         pred_rows = _predict_binding_scores(
             trainiter=trainiter,
             config=config,
@@ -360,7 +390,9 @@ def _run_stream_mode(
             prepare_prots_input_fn=prepare_prots_input_fn,
             batch_size=max(1, int(batch_size)),
         )
-        merge_binding_site_rows_atomic(binding_sites_path, pred_rows)
+        infer_elapsed = time.monotonic() - infer_started
+        pending_persist_rows.update(pred_rows)
+        persist_rows(force=False)
         for seq_id, score_text in pred_rows.items():
             pending.pop(seq_id, None)
             arr = _score_text_to_float_array(score_text)
@@ -378,7 +410,10 @@ def _run_stream_mode(
         wrote = len(pred_rows)
         buffer_feats = {}
         buffer_seqs = {}
-        print(f"PSEQ_STREAM wrote={wrote} remaining={len(pending)} cache={binding_sites_path}")
+        print(
+            f"PSEQ_STREAM wrote={wrote} remaining={len(pending)} cache={binding_sites_path} "
+            f"infer_s={infer_elapsed:.3f}"
+        )
         return wrote
 
     def handle_queue_item(item) -> None:
@@ -444,6 +479,7 @@ def _run_stream_mode(
                     raise RuntimeError(f"Received PSEQ_FINISH with pending sequence IDs: {missing}")
                 break
 
+        persist_rows(force=True)
         stream.send(
             {
                 "type": "WORKER_DONE",
@@ -469,6 +505,10 @@ def _run_stream_mode(
             pass
         raise
     finally:
+        try:
+            persist_rows(force=True)
+        except Exception:
+            pass
         recv_stop.set()
         if receiver_thread.is_alive():
             receiver_thread.join(timeout=1.0)
