@@ -464,6 +464,8 @@ class WorkerState:
     started_at_monotonic: float | None = None
     active_seq_count: int = 0
     elapsed_seconds_total: float = 0.0
+    stream_done_received: bool = False
+    waiting_for_stream_done_since: float | None = None
 
     def running(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -1204,10 +1206,90 @@ def _run_kinform_parallel_pipeline_stream(
     first_weighted_ready_at: float | None = None
 
     pseq_client_id: int | None = None
+    pseq_client_lock = threading.Lock()
     sent_to_pseq: set[str] = set()
+    queued_to_pseq: set[str] = set()
     pseq_sends_per_tick = max(1, int(_env_float("KINFORM_PARALLEL_PSEQ_SENDS_PER_TICK", 4.0)))
+    pseq_send_queue_size = max(4, int(_env_float("KINFORM_PARALLEL_PSEQ_SEND_QUEUE_SIZE", 16.0)))
+    pseq_send_queue: queue.Queue[tuple[str, dict, bytes] | None] = queue.Queue(maxsize=pseq_send_queue_size)
+    pseq_send_results: queue.Queue[tuple[str, str, str]] = queue.Queue()
+    pseq_sender_stop = threading.Event()
     score_refresh_seconds = max(1.0, _env_float("KINFORM_PARALLEL_TSV_REFRESH_SECONDS", 30.0))
     last_score_refresh_at = 0.0
+    worker_done_wait_seconds = max(1.0, _env_float("KINFORM_PARALLEL_WORKER_DONE_WAIT_SECONDS", 30.0))
+
+    def get_pseq_client_id() -> int | None:
+        with pseq_client_lock:
+            return pseq_client_id
+
+    def set_pseq_client_id(value: int | None) -> None:
+        nonlocal pseq_client_id
+        with pseq_client_lock:
+            pseq_client_id = value
+
+    def reset_pseq_send_state() -> None:
+        sent_to_pseq.clear()
+        queued_to_pseq.clear()
+        while True:
+            try:
+                pseq_send_queue.get_nowait()
+            except queue.Empty:
+                break
+        while True:
+            try:
+                pseq_send_results.get_nowait()
+            except queue.Empty:
+                break
+
+    def drain_pseq_send_results() -> bool:
+        had_update = False
+        while True:
+            try:
+                status, seq_id, detail = pseq_send_results.get_nowait()
+            except queue.Empty:
+                break
+            had_update = True
+            queued_to_pseq.discard(seq_id)
+            if status == "sent":
+                sent_to_pseq.add(seq_id)
+                continue
+            sent_to_pseq.discard(seq_id)
+            if detail:
+                _log(
+                    env,
+                    "debug",
+                    f"pseq send retry seq_id={seq_id} reason={detail}",
+                    job_id=job_id,
+                )
+        return had_update
+
+    def _pseq_sender_loop() -> None:
+        while not pseq_sender_stop.is_set():
+            try:
+                item = pseq_send_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if item is None:
+                return
+            seq_id, header, payload = item
+            if pseq_sender_stop.is_set():
+                return
+            client_id = get_pseq_client_id()
+            if client_id is None:
+                pseq_send_results.put(("retry", seq_id, "pseq client not connected"))
+                continue
+            try:
+                server.send(client_id, header, payload)
+                pseq_send_results.put(("sent", seq_id, ""))
+            except Exception as exc:
+                pseq_send_results.put(("retry", seq_id, str(exc)))
+
+    pseq_sender_thread = threading.Thread(
+        target=_pseq_sender_loop,
+        name=f"kinform-pseq-sender-{job_id or 'job'}",
+        daemon=True,
+    )
+    pseq_sender_thread.start()
 
     def has_residue(family: str, root: str, seq_id: str) -> bool:
         return residue_cache.has((family, root, seq_id))
@@ -1349,7 +1431,6 @@ def _run_kinform_parallel_pipeline_stream(
         raise RuntimeError(f"Unknown KinForm worker '{worker_name}'.")
 
     def launch_worker(worker_name: str) -> bool:
-        nonlocal sent_to_pseq
         state = workers[worker_name]
         seq_ids_to_run = needed_ids(worker_name)
         if not seq_ids_to_run:
@@ -1366,9 +1447,12 @@ def _run_kinform_parallel_pipeline_stream(
         state.active_seq_ids = set(seq_ids_to_run)
         state.active_seq_count = len(seq_ids_to_run)
         state.started_at_monotonic = time.monotonic()
+        state.stream_done_received = False
+        state.waiting_for_stream_done_since = None
         if worker_name == _PSEQ_WORKER:
             # New Pseq2Sites process needs fresh residue dispatch for any unresolved IDs.
-            sent_to_pseq = set()
+            set_pseq_client_id(None)
+            reset_pseq_send_state()
         state.attempts += 1
         _log(
             env,
@@ -1385,6 +1469,30 @@ def _run_kinform_parallel_pipeline_stream(
         rc = state.process.poll()
         if rc is None:
             return False
+
+        if rc == 0 and not state.stream_done_received:
+            now = time.monotonic()
+            if state.waiting_for_stream_done_since is None:
+                state.waiting_for_stream_done_since = now
+                _log(
+                    env,
+                    "debug",
+                    f"worker={worker_name} exited rc=0; waiting for WORKER_DONE event before retry checks.",
+                    job_id=job_id,
+                )
+                return False
+            waited_s = max(0.0, now - state.waiting_for_stream_done_since)
+            if waited_s < worker_done_wait_seconds:
+                return False
+            _log(
+                env,
+                "warn",
+                (
+                    f"worker={worker_name} rc=0 but WORKER_DONE not seen after {waited_s:.3f}s; "
+                    "continuing completion checks."
+                ),
+                job_id=job_id,
+            )
 
         elapsed_s = 0.0
         if state.started_at_monotonic is not None:
@@ -1403,6 +1511,7 @@ def _run_kinform_parallel_pipeline_stream(
         )
         state.started_at_monotonic = None
         state.active_seq_count = 0
+        state.waiting_for_stream_done_since = None
 
         _cleanup_worker_inputs(state)
         state.process = None
@@ -1437,11 +1546,8 @@ def _run_kinform_parallel_pipeline_stream(
             )
         return True
 
-    def try_send_t5_to_pseq(seq_id: str) -> bool:
-        nonlocal pseq_client_id
-        if pseq_client_id is None:
-            return False
-        if seq_id in sent_to_pseq:
+    def try_queue_t5_to_pseq(seq_id: str) -> bool:
+        if seq_id in sent_to_pseq or seq_id in queued_to_pseq:
             return False
         if seq_id not in targets.binding_site_targets or seq_id in bs_scores:
             return False
@@ -1459,8 +1565,11 @@ def _run_kinform_parallel_pipeline_stream(
             "dtype": "float32",
             "shape": [int(x) for x in arr.shape],
         }
-        server.send(pseq_client_id, header, payload)
-        sent_to_pseq.add(seq_id)
+        try:
+            pseq_send_queue.put_nowait((seq_id, header, payload))
+        except queue.Full:
+            return False
+        queued_to_pseq.add(seq_id)
         return True
 
     def attempt_weighted_for_seq(seq_id: str) -> int:
@@ -1504,6 +1613,8 @@ def _run_kinform_parallel_pipeline_stream(
         while True:
             had_activity = False
             derived_weighted = 0
+            if drain_pseq_send_results():
+                had_activity = True
 
             event = server.recv_event(timeout_seconds=0.2)
             pending_events: list[tuple[str, int, dict | None, bytes | None]] = []
@@ -1514,8 +1625,9 @@ def _run_kinform_parallel_pipeline_stream(
             for kind, client_id, header, payload in pending_events:
                 had_activity = True
                 if kind == "disconnect":
-                    if pseq_client_id == client_id:
-                        pseq_client_id = None
+                    if get_pseq_client_id() == client_id:
+                        set_pseq_client_id(None)
+                        _log(env, "warn", f"pseq stream client disconnected id={client_id}", job_id=job_id)
                     continue
 
                 if kind == "error":
@@ -1527,7 +1639,7 @@ def _run_kinform_parallel_pipeline_stream(
 
                 evt_type = str(header.get("type", "")).strip().upper()
                 if evt_type == "PSEQ_REGISTER":
-                    pseq_client_id = client_id
+                    set_pseq_client_id(client_id)
                     _log(env, "info", f"pseq stream client registered id={client_id}", job_id=job_id)
                     continue
 
@@ -1539,6 +1651,9 @@ def _run_kinform_parallel_pipeline_stream(
 
                 if evt_type == "WORKER_DONE":
                     worker_name = str(header.get("worker", "unknown"))
+                    state = workers.get(worker_name)
+                    if state is not None:
+                        state.stream_done_received = True
                     _log(env, "debug", f"worker={worker_name} emitted WORKER_DONE", job_id=job_id)
                     continue
 
@@ -1560,7 +1675,7 @@ def _run_kinform_parallel_pipeline_stream(
                         _save_array_atomic(mean_path, arr.mean(axis=0).astype(np.float32))
 
                     if family == _T5_FAMILY and root == "prot_t5_last":
-                        try_send_t5_to_pseq(seq_id)
+                        try_queue_t5_to_pseq(seq_id)
 
                     if seq_id in bs_scores:
                         derived_weighted += attempt_weighted_for_seq(seq_id)
@@ -1576,6 +1691,8 @@ def _run_kinform_parallel_pipeline_stream(
                         first_bs_ready_at = time.monotonic()
                     weights_arr = _decode_array(header, payload).reshape(-1)
                     bs_scores[seq_id] = weights_arr.astype(np.float64, copy=False)
+                    queued_to_pseq.discard(seq_id)
+                    sent_to_pseq.add(seq_id)
                     derived_weighted += attempt_weighted_for_seq(seq_id)
                     continue
 
@@ -1590,10 +1707,10 @@ def _run_kinform_parallel_pipeline_stream(
                         bs_scores[sid] = w
 
             # Send any queued T5-last residues once pseq client is connected.
-            if pseq_client_id is not None:
+            if get_pseq_client_id() is not None:
                 sent_this_tick = 0
                 for sid in list(needed_ids(_PSEQ_WORKER)):
-                    if try_send_t5_to_pseq(sid):
+                    if try_queue_t5_to_pseq(sid):
                         had_activity = True
                         sent_this_tick += 1
                         if sent_this_tick >= pseq_sends_per_tick:
@@ -1609,10 +1726,11 @@ def _run_kinform_parallel_pipeline_stream(
                 _log(env, "debug", f"derived weighted={derived_weighted} this iteration", job_id=job_id)
 
             if targets.all_done(bs_scores):
-                if pseq_client_id is not None:
+                current_pseq_client = get_pseq_client_id()
+                if current_pseq_client is not None:
                     try:
                         server.send(
-                            pseq_client_id,
+                            current_pseq_client,
                             {
                                 "type": "PSEQ_FINISH",
                                 "job_id": job_id or "",
@@ -1665,6 +1783,9 @@ def _run_kinform_parallel_pipeline_stream(
                         f"weighted_calc_count={weighted_compute_count_total} "
                         f"weighted_calc_s={weighted_compute_seconds_total:.3f} "
                         f"weighted_calc_avg_ms={(weighted_compute_seconds_total * 1000.0 / weighted_compute_count_total) if weighted_compute_count_total else 0.0:.3f} "
+                        f"pseq_sent={len(sent_to_pseq)} "
+                        f"pseq_queued={len(queued_to_pseq)} "
+                        f"pseq_queue_depth={pseq_send_queue.qsize()} "
                         f"gpu_residue_cache_gb={residue_cache.gpu_bytes / (1024 ** 3):.3f}"
                     ),
                     job_id=job_id,
@@ -1728,6 +1849,13 @@ def _run_kinform_parallel_pipeline_stream(
         for state in workers.values():
             _terminate_worker(state)
             _cleanup_worker_inputs(state)
+        pseq_sender_stop.set()
+        try:
+            pseq_send_queue.put_nowait(None)
+        except Exception:
+            pass
+        if pseq_sender_thread.is_alive():
+            pseq_sender_thread.join(timeout=2.0)
         residue_cache.clear()
         server.close()
 

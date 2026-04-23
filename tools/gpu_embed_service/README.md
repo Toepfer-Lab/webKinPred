@@ -68,7 +68,11 @@ Minimal FastAPI service for remote GPU embedding offload.
   - Default: `0` (orchestrator already launches unresolved IDs)
 - `KINFORM_PARALLEL_PSEQ_SENDS_PER_TICK`: max T5 residue payloads sent to pseq worker per orchestrator loop.
   - Default: `4`
+- `KINFORM_PARALLEL_PSEQ_SEND_QUEUE_SIZE`: max queued T5-last payloads waiting on async pseq sender thread.
+  - Default: `16`
 - `KINFORM_PARALLEL_TSV_REFRESH_SECONDS`: minimum seconds between orchestrator refreshes from shared binding-sites TSV.
+  - Default: `30`
+- `KINFORM_PARALLEL_WORKER_DONE_WAIT_SECONDS`: grace period before treating `rc=0` worker exit as complete when `WORKER_DONE` stream event is delayed.
   - Default: `30`
 - `KINFORM_PARALLEL_STREAM_SOCKET_DIR`: Unix socket directory for orchestrator-worker stream IPC.
   - Default: `/tmp/webkinpred-gpu-embed/kinform`
