@@ -2,7 +2,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
-from .models import ApiKey, ApiUser, Job
+from .models import ApiKey, ApiUser, Job, JobProgressStage
 from api.utils.quotas import get_quota_usage
 from db_models.seqmap_models import Sequence
 
@@ -176,6 +176,26 @@ class JobAdmin(admin.ModelAdmin):
             links.append('<span style="color: #666;">Job not completed</span>')
 
         return format_html(" | ".join(links))
+
+
+@admin.register(JobProgressStage)
+class JobProgressStageAdmin(admin.ModelAdmin):
+    list_display = [
+        "job",
+        "stage_index",
+        "target",
+        "method_key",
+        "status",
+        "molecules_processed",
+        "molecules_total",
+        "predictions_made",
+        "predictions_total",
+        "embedding_state",
+        "updated_at",
+    ]
+    list_filter = ["status", "target", "method_key", "embedding_state", "updated_at"]
+    search_fields = ["job__public_id", "target", "method_key", "method_display_name"]
+    readonly_fields = ["updated_at"]
 
 
 @admin.register(ApiKey)

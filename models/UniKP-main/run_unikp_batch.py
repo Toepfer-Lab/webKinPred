@@ -7,6 +7,7 @@ import re
 import pickle
 import gc
 import warnings
+from pathlib import Path
 from build_vocab import WordVocab
 from pretrain_trfm import TrfmSeq2seq
 from utils import split
@@ -14,12 +15,34 @@ from transformers import T5Tokenizer, T5EncoderModel
 from transformers.utils import logging
 import subprocess
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT_STR = str(_REPO_ROOT)
+if _REPO_ROOT_STR in sys.path:
+    sys.path.remove(_REPO_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
+
 logging.set_verbosity_error()
 warnings.filterwarnings(
     "ignore",
     message=r"Trying to unpickle estimator .*",
     category=UserWarning,
 )
+
+
+def _env_int(name, default):
+    raw = os.environ.get(name, "")
+    if raw is None:
+        return default
+    raw = str(raw).strip()
+    if not raw:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
 
 # Use environment variables to determine paths
 if os.environ.get("UNIKP_MEDIA_PATH"):
@@ -103,7 +126,8 @@ def load_t5_model():
     """Load T5 model once and return components."""
     print("Loading T5 model...")
     gc.collect()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     try:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         tokenizer = T5Tokenizer.from_pretrained(
@@ -150,55 +174,127 @@ def resolve_seq_ids_via_cli(sequences):
     return ids
 
 
-def seq_to_vec(sequences, tokenizer=None, model=None, device=None):
+def seq_to_vec(
+    sequences,
+    tokenizer=None,
+    model=None,
+    device=None,
+    seq_ids=None,
+    batch_size=1,
+    planned_missing_ids=None,
+):
     """Convert sequences to vectors using pre-loaded T5 model (if provided)."""
-    # Resolve IDs once for all sequences (duplicates included)
-    ids = resolve_seq_ids_via_cli(sequences)
+    ids = list(seq_ids) if seq_ids is not None else resolve_seq_ids_via_cli(sequences)
+    if len(ids) != len(sequences):
+        raise RuntimeError(
+            f"seq_to_vec got {len(ids)} ids for {len(sequences)} sequences"
+        )
 
-    vecs = []
-    seqs_to_embed = []
-    ids_to_embed = []
+    seq_id_to_positions = {}
+    seq_id_to_example_seq = {}
+    for idx, (seq, seq_id) in enumerate(zip(sequences, ids)):
+        seq_id_to_positions.setdefault(seq_id, []).append(idx)
+        if seq_id not in seq_id_to_example_seq:
+            seq_id_to_example_seq[seq_id] = seq
 
-    for seq, seq_id in zip(sequences, ids):
-        vec_path = os.path.join(SEQ_VEC_DIR, f"{seq_id}.npy")
-        if os.path.exists(vec_path):
-            vecs.append(np.load(vec_path))
-        else:
-            seqs_to_embed.append(seq)
-            ids_to_embed.append(seq_id)
+    cache_dir = Path(SEQ_VEC_DIR).resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    vec_by_seq_id = {}
+    if planned_missing_ids is None:
+        missing_seq_ids, ready_seq_ids = resolve_missing_ids(
+            seq_id_to_positions.keys(),
+            cache_dir=cache_dir,
+            suffix=".npy",
+        )
+    else:
+        missing_seq_ids = []
+        for seq_id in planned_missing_ids:
+            if seq_id in seq_id_to_positions and seq_id not in missing_seq_ids:
+                missing_seq_ids.append(seq_id)
+        ready_seq_ids = set(seq_id_to_positions.keys()) - set(missing_seq_ids)
 
-    if seqs_to_embed:
+    for seq_id in ready_seq_ids:
+        vec_by_seq_id[seq_id] = np.load(cache_dir / f"{seq_id}.npy")
+
+    if missing_seq_ids:
         if tokenizer is None or model is None or device is None:
             raise RuntimeError(
                 "T5 model components not provided for embedding generation"
             )
 
-        print(f"Generating embeddings for {len(seqs_to_embed)} sequences...")
-        for seq, sid in zip(seqs_to_embed, ids_to_embed):
-            spaced = " ".join(seq)
-            spaced = re.sub(r"[UZOB]", "X", spaced)
-            encoded = tokenizer.batch_encode_plus(
-                [spaced], add_special_tokens=True, padding=True
-            )
-            input_ids = torch.tensor(encoded["input_ids"]).to(device)
-            attention_mask = torch.tensor(encoded["attention_mask"]).to(device)
-            with torch.no_grad():
-                embedding = model(
-                    input_ids=input_ids, attention_mask=attention_mask
-                ).last_hidden_state
-            embedding = embedding.float().cpu().numpy()[0]
-            seq_len = (attention_mask[0] == 1).sum()
-            seq_vec = embedding[: seq_len - 1].mean(axis=0)
-            np.save(os.path.join(SEQ_VEC_DIR, f"{sid}.npy"), seq_vec)
-            vecs.append(seq_vec)
+        print(f"Generating embeddings for {len(missing_seq_ids)} sequences...")
+        async_workers = max(
+            1,
+            int(
+                os.environ.get(
+                    "UNIKP_CACHE_ASYNC_WORKERS",
+                    os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"),
+                )
+            ),
+        )
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+        with SpoolAsyncCommitter(
+            max_workers=async_workers,
+            spool_dir=spool_dir,
+            spool_fallback_dir=spool_fallback,
+        ) as committer:
+            for start in range(0, len(missing_seq_ids), batch_size):
+                batch_ids = missing_seq_ids[start : start + batch_size]
+                spaced_batch = []
+                for sid in batch_ids:
+                    spaced = " ".join(seq_id_to_example_seq[sid])
+                    spaced_batch.append(re.sub(r"[UZOB]", "X", spaced))
+
+                encoded = tokenizer.batch_encode_plus(
+                    spaced_batch,
+                    add_special_tokens=True,
+                    padding=True,
+                    return_tensors="pt",
+                )
+                input_ids = encoded["input_ids"].to(device)
+                attention_mask = encoded["attention_mask"].to(device)
+
+                with torch.no_grad():
+                    embedding = model(
+                        input_ids=input_ids, attention_mask=attention_mask
+                    ).last_hidden_state
+
+                embedding_np = embedding.float().cpu().numpy()
+                lengths = attention_mask.sum(dim=1).cpu().numpy()
+
+                for row_idx, sid in enumerate(batch_ids):
+                    seq_len = int(lengths[row_idx])
+                    token_count = max(seq_len - 1, 1)
+                    seq_vec = embedding_np[row_idx, :token_count].mean(axis=0).astype(np.float32, copy=False)
+                    committer.submit_numpy(cache_dir=cache_dir, seq_id=sid, array=seq_vec)
+                    vec_by_seq_id[sid] = seq_vec
+
+    vecs = []
+    for seq_id in ids:
+        vec = vec_by_seq_id.get(seq_id)
+        if vec is None:
+            raise RuntimeError(f"Missing sequence vector for seq_id={seq_id}")
+        vecs.append(vec)
 
     return np.stack(vecs)
+
+
+def _predict_batch(model, smiles_batch, seq_vec_batch, vocab, trfm):
+    smiles_vecs = smiles_to_vec(smiles_batch, vocab, trfm)
+    features = np.concatenate([smiles_vecs, seq_vec_batch], axis=1)
+    preds = model.predict(features)
+    return np.power(10, preds)
 
 
 def main(input_path, output_path, task_type):
     df = pd.read_csv(input_path)
     sequences = df["Protein Sequence"].tolist()
     smiles = df["Substrate SMILES"].tolist()
+    total_predictions = len(sequences)
+
+    # Tunable throughput controls (safe defaults).
+    pred_batch_size = _env_int("UNIKP_PRED_BATCH_SIZE", 128)
 
     # Load SMILES model once
     print("Loading SMILES model...")
@@ -206,10 +302,12 @@ def main(input_path, output_path, task_type):
 
     # Check if we need T5 model (if any sequences need embedding)
     all_seq_ids = resolve_seq_ids_via_cli(sequences)
-    need_t5_model = any(
-        not os.path.exists(os.path.join(SEQ_VEC_DIR, f"{seq_id}.npy"))
-        for seq_id in all_seq_ids
+    planned_missing_ids, _ready_ids = resolve_missing_ids(
+        all_seq_ids,
+        cache_dir=Path(SEQ_VEC_DIR).resolve(),
+        suffix=".npy",
     )
+    need_t5_model = len(planned_missing_ids) > 0
 
     # Load T5 model once if needed
     tokenizer, t5_model, device = None, None, None
@@ -229,43 +327,50 @@ def main(input_path, output_path, task_type):
     with open(model_path, "rb") as f:
         model = pickle.load(f)
 
-    predictions = []
-    total_predictions = len(sequences)
+    if total_predictions:
+        # Sequence vectors are loaded/computed once for all rows.
+        sequence_vecs = seq_to_vec(
+            sequences,
+            tokenizer=tokenizer,
+            model=t5_model,
+            device=device,
+            seq_ids=all_seq_ids,
+            batch_size=_env_int("UNIKP_T5_BATCH_SIZE", 1),
+            planned_missing_ids=planned_missing_ids,
+        )
+        predictions = [None] * total_predictions
 
-    # Process predictions one by one
-    for i, (sequence, smile) in enumerate(zip(sequences, smiles)):
-        try:
-            print(f"Progress: {i+1}/{total_predictions} predictions made", flush=True)
-
-            # Feature extraction - using pre-loaded models
-            print("Extracting SMILES features...")
-            smiles_vecs = smiles_to_vec([smile], vocab, trfm)
-            print("Extracting sequence features...")
+        for start in range(0, total_predictions, pred_batch_size):
+            end = min(start + pred_batch_size, total_predictions)
             try:
-                sequence_vecs = seq_to_vec([sequence], tokenizer, t5_model, device)
-            except Exception as e:
-                print("Error occurred while extracting sequence features:")
-                print(e)
-                raise RuntimeError(f"Failed to extract sequence features: {e}")
+                batch_preds = _predict_batch(
+                    model=model,
+                    smiles_batch=smiles[start:end],
+                    seq_vec_batch=sequence_vecs[start:end],
+                    vocab=vocab,
+                    trfm=trfm,
+                )
+                predictions[start:end] = batch_preds.tolist()
+            except Exception as batch_error:
+                print(f"Batch {start + 1}-{end} failed: {batch_error}")
+                # Keep per-row fallback so one bad sample does not fail the whole job.
+                for row_idx in range(start, end):
+                    try:
+                        single_pred = _predict_batch(
+                            model=model,
+                            smiles_batch=[smiles[row_idx]],
+                            seq_vec_batch=sequence_vecs[row_idx : row_idx + 1],
+                            vocab=vocab,
+                            trfm=trfm,
+                        )
+                        predictions[row_idx] = float(single_pred[0])
+                    except Exception as row_error:
+                        print(f"Error processing sample {row_idx}: {row_error}")
+                        predictions[row_idx] = None
 
-            # Concatenate - same as original
-            features = np.concatenate([smiles_vecs, sequence_vecs], axis=1)
-
-            # Predict - same as original
-            preds = model.predict(features)
-            print(preds)
-            # convert from log10 to normal scale
-            preds = np.power(10, preds)
-            print(preds)
-            predictions.append(preds[0])  # Get single prediction
-
-            # Clean up memory after each prediction
-            del smiles_vecs, sequence_vecs, features, preds
-            gc.collect()
-
-        except Exception as e:
-            print(f"Error processing sample {i}: {e}")
-            predictions.append(None)  # Use None for failed predictions
+            print(f"Progress: {end}/{total_predictions} predictions made", flush=True)
+    else:
+        predictions = []
 
     # Clean up models
     del vocab, trfm

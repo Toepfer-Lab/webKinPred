@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -11,16 +12,18 @@ from dataclasses import dataclass
 
 from api.services.embedding_plan_service import build_embedding_plan, gpu_step_work
 from api.services.embedding_progress_service import start_embedding_tracking
+from api.services.gpu_precompute_status_service import record_gpu_precompute_result
 
 
 _DEFAULT_HEALTH_TTL = 10
-_DEFAULT_JOB_TIMEOUT = 1200
 _DEFAULT_POLL_INTERVAL = 1.0
+_DEFAULT_POLL_LOG_INTERVAL = 120
 _DEFAULT_HTTP_TIMEOUT = 5.0
 
 _status_cache_lock = threading.Lock()
 _status_cache_payload: dict | None = None
 _status_cache_ts = 0.0
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -127,20 +130,51 @@ def get_gpu_status(*, force_refresh: bool = False) -> dict:
     return dict(payload)
 
 
-def _poll_job(base: str, gpu_job_id: str) -> dict:
-    timeout_secs = _env_int("GPU_EMBED_JOB_TIMEOUT_SECONDS", _DEFAULT_JOB_TIMEOUT)
-    deadline = time.monotonic() + float(timeout_secs)
+def _poll_job(
+    base: str,
+    gpu_job_id: str,
+    *,
+    job_public_id: str,
+    method_key: str,
+    target: str,
+) -> dict:
+    log_interval = _env_int("GPU_EMBED_POLL_LOG_INTERVAL_SECONDS", _DEFAULT_POLL_LOG_INTERVAL)
+    started_at = time.monotonic()
+    next_log_at = started_at + float(log_interval)
+    last_state: str | None = None
 
     while True:
         status = _http_json("GET", f"{base}/embed/jobs/{urllib.parse.quote(gpu_job_id)}")
         state = str(status.get("status", "")).strip().lower()
+        if state != last_state:
+            last_state = state
+            _log.info(
+                "GPU precompute status update for job %s (%s/%s): gpu_job_id=%s state=%s",
+                job_public_id,
+                method_key,
+                target,
+                gpu_job_id,
+                state or "unknown",
+            )
+
         if state in {"done", "completed"}:
             return {"status": "done", "detail": status}
         if state in {"failed", "error"}:
             return {"status": "failed", "detail": status}
 
-        if time.monotonic() >= deadline:
-            return {"status": "timeout", "detail": status}
+        now = time.monotonic()
+        if now >= next_log_at:
+            elapsed = int(now - started_at)
+            _log.info(
+                "Waiting for GPU precompute job %s (%s/%s): gpu_job_id=%s state=%s elapsed=%ss",
+                job_public_id,
+                method_key,
+                target,
+                gpu_job_id,
+                state or "unknown",
+                elapsed,
+            )
+            next_log_at = now + float(log_interval)
 
         time.sleep(_DEFAULT_POLL_INTERVAL)
 
@@ -155,7 +189,24 @@ def run_gpu_precompute_if_available(
 ) -> GpuPrecomputeResult:
     fail_closed = _env_bool("GPU_EMBED_FAIL_CLOSED", default=False)
 
+    def _record(result: GpuPrecomputeResult) -> None:
+        try:
+            record_gpu_precompute_result(
+                job_public_id=job_public_id,
+                method_key=method_key,
+                target=target,
+                attempted=result.attempted,
+                used_gpu=result.used_gpu,
+                completed=result.completed,
+                failed=result.failed,
+                reason=result.reason,
+            )
+        except Exception:
+            # Telemetry is best-effort; never break prediction flow/tests.
+            pass
+
     def _finish(result: GpuPrecomputeResult) -> GpuPrecomputeResult:
+        _record(result)
         if fail_closed and not result.completed:
             raise RuntimeError(
                 f"GPU precompute required but incomplete for {method_key}/{target}: "
@@ -164,6 +215,10 @@ def run_gpu_precompute_if_available(
         return result
 
     if not valid_sequences:
+        _log.info(
+            "Skipping GPU precompute for job %s (%s/%s): no valid sequences",
+            job_public_id, method_key, target,
+        )
         return _finish(GpuPrecomputeResult(False, False, False, False, "no_valid_sequences"))
 
     env_data = env or {}
@@ -175,30 +230,67 @@ def run_gpu_precompute_if_available(
             env=env_data,
         )
     except Exception as exc:
+        _log.exception(
+            "Embedding plan failed for job %s (%s/%s): %s",
+            job_public_id, method_key, target, exc,
+        )
         return _finish(GpuPrecomputeResult(False, False, False, False, f"plan_failed: {exc}"))
 
     if plan.need_computation <= 0:
+        _log.info(
+            "Skipping GPU precompute for job %s (%s/%s): cache already complete",
+            job_public_id, method_key, target,
+        )
         return _finish(GpuPrecomputeResult(False, False, True, False, "cache_complete"))
     if not plan.gpu_supported:
         # Keep unsupported methods fail-open even in strict mode.
-        return GpuPrecomputeResult(False, False, False, False, plan.gpu_reason or "unsupported")
+        _log.info(
+            "Skipping GPU precompute for job %s (%s/%s): unsupported (%s)",
+            job_public_id, method_key, target, plan.gpu_reason or "unsupported",
+        )
+        unsupported = GpuPrecomputeResult(
+            False, False, False, False, plan.gpu_reason or "unsupported"
+        )
+        _record(unsupported)
+        return unsupported
 
     base = _base_url()
     if not base:
+        _log.info(
+            "Skipping GPU precompute for job %s (%s/%s): service URL not configured",
+            job_public_id, method_key, target,
+        )
         return _finish(GpuPrecomputeResult(False, False, False, False, "not_configured"))
 
     status = get_gpu_status()
     if not status.get("online"):
+        _log.warning(
+            "GPU offline for job %s (%s/%s): %s. Falling back to local compute.",
+            job_public_id, method_key, target, status.get("reason") or "offline",
+        )
         return _finish(
             GpuPrecomputeResult(True, False, False, True, status.get("reason") or "offline")
         )
 
     step_work = gpu_step_work(plan)
     if not step_work:
+        _log.info(
+            "GPU precompute not needed for job %s (%s/%s): no missing GPU steps",
+            job_public_id, method_key, target,
+        )
         return _finish(GpuPrecomputeResult(True, False, True, False, "no_missing_gpu_steps"))
 
     missing_seq_ids = sorted({seq_id for seq_ids in step_work.values() for seq_id in seq_ids})
     seq_id_to_seq = {seq_id: plan.seq_id_to_seq[seq_id] for seq_id in missing_seq_ids if seq_id in plan.seq_id_to_seq}
+    _log.info(
+        "Submitting GPU precompute for job %s (%s/%s): %d missing files, %d step(s), %d sequence(s)",
+        job_public_id,
+        method_key,
+        target,
+        plan.need_computation,
+        len(step_work),
+        len(missing_seq_ids),
+    )
 
     # Start tracker before GPU writes begin so inotify observes remote file creation.
     start_embedding_tracking(
@@ -221,9 +313,27 @@ def run_gpu_precompute_if_available(
         response = _http_json("POST", f"{base}/embed/jobs", payload=payload)
         gpu_job_id = str(response.get("job_id", "")).strip()
         if not gpu_job_id:
+            _log.error(
+                "GPU precompute submission failed for job %s (%s/%s): missing gpu job id in response",
+                job_public_id, method_key, target,
+            )
             return _finish(GpuPrecomputeResult(True, True, False, True, "missing_job_id"))
 
-        polled = _poll_job(base, gpu_job_id)
+        _log.info(
+            "Submitted job to GPU for job %s (%s/%s): gpu_job_id=%s",
+            job_public_id, method_key, target, gpu_job_id,
+        )
+        _log.info(
+            "Waiting for GPU job to complete for job %s (%s/%s): gpu_job_id=%s",
+            job_public_id, method_key, target, gpu_job_id,
+        )
+        polled = _poll_job(
+            base,
+            gpu_job_id,
+            job_public_id=job_public_id,
+            method_key=method_key,
+            target=target,
+        )
         if polled["status"] == "done":
             # Remote service may report "done" while writing no cache files
             # (for example during smoke/no-op command wiring). Re-check local
@@ -236,11 +346,19 @@ def run_gpu_precompute_if_available(
                     env=env_data,
                 )
             except Exception as exc:
+                _log.exception(
+                    "GPU post-check failed for job %s (%s/%s): %s",
+                    job_public_id, method_key, target, exc,
+                )
                 return _finish(
                     GpuPrecomputeResult(True, True, False, True, f"postcheck_failed: {exc}")
                 )
 
             if post_plan.need_computation > 0:
+                _log.warning(
+                    "GPU job finished but outputs are incomplete for job %s (%s/%s): still missing %d file(s). Falling back to local compute.",
+                    job_public_id, method_key, target, post_plan.need_computation,
+                )
                 return _finish(
                     GpuPrecomputeResult(
                         True,
@@ -251,10 +369,22 @@ def run_gpu_precompute_if_available(
                     )
                 )
 
+            _log.info(
+                "GPU finished for job %s (%s/%s), proceeding with prediction now.",
+                job_public_id, method_key, target,
+            )
             return _finish(GpuPrecomputeResult(True, True, True, False, "done"))
+        _log.warning(
+            "GPU precompute reported failure for job %s (%s/%s): %s. Falling back to local compute.",
+            job_public_id, method_key, target, polled["status"],
+        )
         return _finish(GpuPrecomputeResult(True, True, False, True, polled["status"]))
     except RuntimeError:
         # Preserve strict-mode failures as-is (do not wrap them again).
         raise
     except Exception as exc:
+        _log.exception(
+            "GPU precompute request failed for job %s (%s/%s): %s",
+            job_public_id, method_key, target, exc,
+        )
         return _finish(GpuPrecomputeResult(True, True, False, True, f"gpu_request_failed: {exc}"))

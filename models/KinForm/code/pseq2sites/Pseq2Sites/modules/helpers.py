@@ -18,7 +18,7 @@ def convert_binding_site_to_labels(binding_site, max_length):
     
     return binding_site_labels
     
-def prepare_prots_input(config, datasets, training = True):
+def prepare_prots_input(config, datasets, training = True, device = None):
     
     # Get features
     prot_ids = [data[0] for data in datasets] 
@@ -28,27 +28,19 @@ def prepare_prots_input(config, datasets, training = True):
     # Collate batch data
     aa_feat, protein_feat, prots_mask, position_ids, chain_idx = collate_prots_feats(config, prot_feats, prot_seqs)
     
-    # Cast to tensor
-    if torch.cuda.is_available():
-        aa_feat = torch.tensor(aa_feat, dtype = torch.float32).cuda()
-        protein_feat = torch.tensor(protein_feat, dtype = torch.float32).cuda()
-        prots_mask = torch.tensor(prots_mask, dtype = torch.long).cuda()
-        position_ids = torch.tensor(position_ids, dtype = torch.long).cuda()
-        chain_idx = torch.tensor(chain_idx, dtype = torch.long).cuda()
-    else:
-        aa_feat = torch.tensor(aa_feat, dtype = torch.float32)
-        protein_feat = torch.tensor(protein_feat, dtype = torch.float32)
-        prots_mask = torch.tensor(prots_mask, dtype = torch.long)
-        position_ids = torch.tensor(position_ids, dtype = torch.long)
-        chain_idx = torch.tensor(chain_idx, dtype = torch.long)
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    aa_feat = torch.tensor(aa_feat, dtype = torch.float32, device=device)
+    protein_feat = torch.tensor(protein_feat, dtype = torch.float32, device=device)
+    prots_mask = torch.tensor(prots_mask, dtype = torch.long, device=device)
+    position_ids = torch.tensor(position_ids, dtype = torch.long, device=device)
+    chain_idx = torch.tensor(chain_idx, dtype = torch.long, device=device)
     
     # Convert binding sites to labels
     if training:
         prot_binding_sites = convert_binding_site_to_labels([data[3] for data in datasets], config["prots"]["max_lengths"])
-        if torch.cuda.is_available():
-            prot_binding_sites = torch.tensor(prot_binding_sites, dtype = torch.float32).cuda()
-        else:
-            prot_binding_sites = torch.tensor(prot_binding_sites, dtype = torch.float32)
+        prot_binding_sites = torch.tensor(prot_binding_sites, dtype = torch.float32, device=device)
         return aa_feat, protein_feat, prots_mask, prot_binding_sites, position_ids, chain_idx
         
     return aa_feat, protein_feat, prots_mask, position_ids, chain_idx

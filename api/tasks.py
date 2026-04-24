@@ -33,6 +33,15 @@ from api.methods.base import PredictionError
 from api.methods.registry import get as get_method
 from api.models import Job
 from api.prediction_engines.generic_subprocess import run_generic_subprocess_prediction
+from api.services.gpu_precompute_status_service import clear_gpu_precompute_status
+from api.services.job_progress_service import (
+    initialise_job_progress_stages,
+    mark_running_stage_failed,
+    mark_stage_completed,
+    mark_stage_failed,
+    mark_stage_running,
+    set_stage_prediction_snapshot,
+)
 from api.services.similarity_service import append_kcat_similarity_columns_to_output_csv
 from api.utils.extra_info import _source, build_extra_info
 from api.utils.handle_long import get_valid_indices, truncate_sequences
@@ -49,6 +58,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Celery tasks
 # ---------------------------------------------------------------------------
+
+
+def _safe_clear_gpu_precompute_status(public_id: str) -> None:
+    try:
+        clear_gpu_precompute_status(public_id)
+    except Exception:
+        # Redis telemetry cleanup is best-effort only.
+        pass
 
 
 @shared_task
@@ -75,6 +92,7 @@ def run_prediction(
         Pre-fetched experimental values to merge into the output, or None.
     """
     job = Job.objects.get(public_id=public_id)
+    _safe_clear_gpu_precompute_status(public_id)
     job.status = "Processing"
     job.start_time = timezone.now()
     job.save(update_fields=["status", "start_time"])
@@ -139,6 +157,7 @@ def run_both_prediction(
         Pre-fetched experimental values to merge into the output, or None.
     """
     job = Job.objects.get(public_id=public_id)
+    _safe_clear_gpu_precompute_status(public_id)
     job.status = "Processing"
     job.start_time = timezone.now()
     job.predictions_made = 0
@@ -207,6 +226,7 @@ def run_multi_prediction(
         Optional pre-fetched experimental rows keyed by target.
     """
     job = Job.objects.get(public_id=public_id)
+    _safe_clear_gpu_precompute_status(public_id)
     job.status = "Processing"
     job.start_time = timezone.now()
     job.predictions_made = 0
@@ -232,6 +252,8 @@ def run_multi_prediction(
         )
         return
 
+    initialise_job_progress_stages(job, ordered_targets, desc_by_target)
+
     try:
         df = _load_input(job)
         _execute_multi_prediction(
@@ -249,6 +271,7 @@ def run_multi_prediction(
         )
 
     except PredictionError as e:
+        mark_running_stage_failed(public_id, message=str(e))
         Job.objects.filter(pk=job.pk).update(
             status="Failed",
             error_message=str(e),
@@ -256,10 +279,12 @@ def run_multi_prediction(
         )
 
     except MemoryError:
+        mark_running_stage_failed(public_id, message="Out of memory.")
         label = "/".join(desc.display_name for desc in desc_by_target.values())
         _handle_oom(job, label)
 
     except Exception as e:
+        mark_running_stage_failed(public_id, message=str(e))
         label = "/".join(desc.display_name for desc in desc_by_target.values())
         Job.objects.filter(pk=job.pk).update(
             status="Failed",
@@ -416,12 +441,16 @@ def _execute_both_prediction(
     km_src: list[str] = [""] * n_rows
     km_extra: list[str] = [""] * n_rows
 
+    eitlem_shared_cache = kcat_desc.key == "EITLEM" and km_desc.key == "EITLEM"
+
     # ── 3. kcat predictions ───────────────────────────────────────────────────
     if valid_idx:
         kcat_call_kwargs: dict = {}
         for col, kwarg_name in kcat_desc.col_to_kwarg.items():
             kcat_call_kwargs[kwarg_name] = [df[col].iloc[i] for i in valid_idx]
         kcat_call_kwargs.update(kcat_desc.target_kwargs.get("kcat", {}))
+        if kcat_desc.key == "EITLEM":
+            kcat_call_kwargs["cleanup_esm1v_embeddings"] = not eitlem_shared_cache
 
         kcat_subset, kcat_bad = _invoke_method_prediction(
             desc=kcat_desc,
@@ -443,6 +472,8 @@ def _execute_both_prediction(
         for col, kwarg_name in km_desc.col_to_kwarg.items():
             km_call_kwargs[kwarg_name] = [df[col].iloc[i] for i in valid_idx]
         km_call_kwargs.update(km_desc.target_kwargs.get("Km", {}))
+        if km_desc.key == "EITLEM":
+            km_call_kwargs["cleanup_esm1v_embeddings"] = True
 
         km_subset, km_bad = _invoke_method_prediction(
             desc=km_desc,
@@ -567,31 +598,53 @@ def _execute_multi_prediction(
             "output_col": desc.output_cols[target],
         }
 
+    eitlem_targets = [target for target in targets if desc_by_target[target].key == "EITLEM"]
+    last_eitlem_target = eitlem_targets[-1] if eitlem_targets else None
+
     for target in targets:
         desc = desc_by_target[target]
         results = target_results[target]
+        mark_stage_running(job.public_id, target, desc.key)
 
         if not valid_idx:
+            set_stage_prediction_snapshot(
+                job_public_id=job.public_id,
+                target=target,
+                method_key=desc.key,
+                molecules_total=n_rows,
+                molecules_processed=0,
+                invalid_rows=0,
+                predictions_total=0,
+                predictions_made=0,
+            )
+            mark_stage_completed(job.public_id, target, desc.key)
             continue
 
         call_kwargs = {}
         for col, kwarg_name in desc.col_to_kwarg.items():
             call_kwargs[kwarg_name] = [df[col].iloc[i] for i in valid_idx]
         call_kwargs.update(desc.target_kwargs.get(target, {}))
+        if desc.key == "EITLEM":
+            call_kwargs["cleanup_esm1v_embeddings"] = target == last_eitlem_target
 
-        pred_subset, invalid_subset = _invoke_method_prediction(
-            desc=desc,
-            sequences=sequences_proc,
-            public_id=job.public_id,
-            target=target,
-            canonicalize_substrates=canonicalize_substrates,
-            **call_kwargs,
-        )
+        try:
+            pred_subset, invalid_subset = _invoke_method_prediction(
+                desc=desc,
+                sequences=sequences_proc,
+                public_id=job.public_id,
+                target=target,
+                canonicalize_substrates=canonicalize_substrates,
+                **call_kwargs,
+            )
+        except Exception as exc:
+            mark_stage_failed(job.public_id, target, desc.key, message=str(exc))
+            raise
 
         for global_i, pred in zip(valid_idx, pred_subset):
             results["preds"][global_i] = pred if pred is not None else ""
             results["sources"][global_i] = f"Prediction from {desc.display_name}"
         skipped_reasons.update(_map_subset_invalid_reasons(valid_idx, invalid_subset))
+        mark_stage_completed(job.public_id, target, desc.key)
 
     # Experimental overrides are only available for kcat and Km.
     for target, exp_key in (("kcat", "kcat_value"), ("Km", "km_value")):

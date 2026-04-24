@@ -4,7 +4,7 @@
 # Service → Image mapping:
 #   backend     → Dockerfile.web   (slim Python, no conda)  ~seconds to rebuild
 #   celery-beat → Dockerfile.web   (slim Python, no conda)  reuses backend image
-#   celery      → Dockerfile       (full worker, all conda envs, parallel stages)
+#   celery      → Dockerfile       (worker runtime; reuses prebuilt webkinpred-envs image)
 #   frontend    → frontend/Dockerfile.prod
 #
 # Use deploy.sh for all deploys — it handles BuildKit flags and prunes dangling
@@ -82,13 +82,15 @@ services:
     restart: unless-stopped
 
   # ── Celery worker ───────────────────────────────────────────────────────────
-  # Full worker image with all conda model environments.
+  # Runtime worker image layered on top of prebuilt conda env image.
   # --max-tasks-per-child: worker subprocess is replaced after N tasks,
   #   freeing all ML model memory that accumulated during inference.
   celery:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        WEBKINPRED_ENVS_IMAGE: ${WEBKINPRED_ENVS_IMAGE:-webkinpred-envs:latest}
     image: webkinpred-worker:latest
     volumes:
       - ./media:/app/media

@@ -129,13 +129,16 @@ class EmbeddingProgressPlanningTests(unittest.TestCase):
         self.assertFalse(started)
         self.assertIsNone(eps.get_embedding_progress("job_x"))
 
-    def test_tracker_marks_seq_done_only_after_all_paths_exist(self):
+    def test_tracker_increments_per_file(self):
+        # need_computation and total count individual files, not sequences.
+        # For sid_1 with 2 missing files, need_computation=2 and computed
+        # increments once per file as each one appears.
         plan = eps._PreparedPlan(
             method_key="CatPred",
             target="kcat",
-            total=1,
+            total=2,
             cached_already=0,
-            need_computation=1,
+            need_computation=2,
             missing_paths_by_seq={"sid_1": {"/tmp/a.pt", "/tmp/b.pt"}},
             path_to_seqs={"/tmp/a.pt": {"sid_1"}, "/tmp/b.pt": {"sid_1"}},
             watch_dirs=set(),
@@ -143,13 +146,13 @@ class EmbeddingProgressPlanningTests(unittest.TestCase):
         tracker = eps._EmbeddingTracker(job_public_id="job_seq_done", plan=plan)
 
         first = tracker._mark_path_present("/tmp/a.pt")
-        self.assertFalse(first)
-        self.assertEqual(tracker.computed, 0)
+        self.assertTrue(first)
+        self.assertEqual(tracker.computed, 1)
         self.assertEqual(tracker.remaining, 1)
 
         second = tracker._mark_path_present("/tmp/b.pt")
         self.assertTrue(second)
-        self.assertEqual(tracker.computed, 1)
+        self.assertEqual(tracker.computed, 2)
         self.assertEqual(tracker.remaining, 0)
 
 

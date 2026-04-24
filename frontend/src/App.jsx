@@ -1,6 +1,6 @@
 // App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import JobSubmissionForm from './components/job-submission/JobSubmissionForm';
 import JobStatus from './components/JobStatus';
 import About from './components/About';
@@ -13,14 +13,19 @@ import ProteinBackground from './components/ProteinBackground';
 import Footer from './components/Footer';
 import './styles/App.css';
 
-function App() {
+function AppContent() {
+  const location = useLocation();
+  const isTrackPage = location.pathname.startsWith('/track-job');
+  const showGpuStatus = location.pathname === '/' || location.pathname.startsWith('/track-job');
+  const gpuLayout = isTrackPage ? 'track' : 'home';
+
   return (
-    <Router>
+    <>
       <ProteinBackground />
-      <div className="app-container">
+      <div className={`app-container${isTrackPage ? ' app-container--track' : ''}`}>
         <Header />
-        <GpuStatus />
-        <main className="main-content">
+        <main className={`main-content${isTrackPage ? ' main-content--track' : ''}`}>
+          {showGpuStatus && <GpuStatus layout={gpuLayout} />}
           <Routes>
             <Route path="/" element={<JobSubmissionForm />} />
             <Route path="/track-job/:public_id" element={<JobStatus />} />
@@ -34,6 +39,14 @@ function App() {
         </main>
         <Footer />
       </div>
+    </>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <AppContent />
     </Router>
   );
 }

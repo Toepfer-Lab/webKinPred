@@ -1,201 +1,272 @@
-import sys
-import pandas as pd
+"""EITLEM-Kinetics prediction script.
+
+ESM1v per-residue representations (seq_len × 1280, float32) are used
+exactly as the original EITLEM model requires — the full matrix is passed
+as `pro_emb` to the GNN, which aggregates it internally.
+
+Embedding resolution order for each sequence
+─────────────────────────────────────────────
+1. Read from  <EITLEM_MEDIA_PATH>/sequence_info/esm1v/<seq_id>.npy
+   (pre-computed by the GPU embedding step when a GPU server is available).
+2. If absent, compute on CPU using the local ESM1v checkpoint and save the
+   full per-residue matrix to the same path.
+
+After all predictions are complete the script deletes every esm1v file it
+touched (GPU-precomputed and CPU-computed alike), so the directory does not
+accumulate stale data between jobs.
+"""
+
 import math
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 import torch
-import esm
 from rdkit import Chem
 from rdkit.Chem import MACCSkeys
-from torch_geometric.data import Data, Batch
+from torch_geometric.data import Batch, Data
 
-# Adjust the import paths according to your project structure
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT_STR = str(_REPO_ROOT)
+if _REPO_ROOT_STR in sys.path:
+    sys.path.remove(_REPO_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
 from KCM import EitlemKcatPredictor
 from KMP import EitlemKmPredictor
-import os
-import numpy as np
-import subprocess
 
-# Use environment variables if available, otherwise fall back to hardcoded paths
-ESM_EMB_DIR = (
-    os.environ.get("EITLEM_MEDIA_PATH", "/home/saleh/webKinPred/media")
-    + "/sequence_info/esm1v"
-)
-SEQMAP_CLI = (
-    os.environ.get("EITLEM_TOOLS_PATH", "/home/saleh/webKinPred/tools")
-    + "/seqmap/main.py"
-)
-SEQMAP_DB = (
-    os.environ.get("EITLEM_MEDIA_PATH", "/home/saleh/webKinPred/media")
-    + "/sequence_info/seqmap.sqlite3"
+# ── Path resolution ────────────────────────────────────────────────────────────
+
+_MEDIA_PATH = os.environ.get("EITLEM_MEDIA_PATH", "/home/saleh/webKinPred/media")
+_TOOLS_PATH = os.environ.get("EITLEM_TOOLS_PATH", "/home/saleh/webKinPred/tools")
+_DELETE_EMBEDDINGS_AFTER_RUN = (
+    str(os.environ.get("EITLEM_DELETE_EMBEDDINGS_AFTER_RUN", "1")).strip().lower()
+    in {"1", "true", "yes", "on"}
 )
 
-# For SEQMAP_PY, use the current Python interpreter if in Docker environment, otherwise use local env
+ESM_EMB_DIR = Path(_MEDIA_PATH) / "sequence_info" / "esm1v"
+
+SEQMAP_CLI = Path(_TOOLS_PATH) / "seqmap" / "main.py"
+SEQMAP_DB  = Path(_MEDIA_PATH) / "sequence_info" / "seqmap.sqlite3"
+
+# Use the running interpreter in Docker; fall back to the local venv otherwise.
+SEQMAP_PY = sys.executable if os.environ.get("EITLEM_MEDIA_PATH") else "/home/saleh/webKinPredEnv/bin/python"
+
 if os.environ.get("EITLEM_MEDIA_PATH"):
-    # We're in Docker - use current Python interpreter
-    SEQMAP_PY = sys.executable
+    _ESM_MODEL_PATH = "/app/models/EITLEM/Weights/esm1v/esm1v_t33_650M_UR90S_1.pt"
+    _WEIGHT_PATHS = {
+        "KCAT": "/app/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
+        "KM":   "/app/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
+    }
 else:
-    # Local environment
-    SEQMAP_PY = "/home/saleh/webKinPredEnv/bin/python"
+    _ESM_MODEL_PATH = "/home/saleh/webKinPred/models/EITLEM/Weights/esm1v/esm1v_t33_650M_UR90S_1.pt"
+    _WEIGHT_PATHS = {
+        "KCAT": "/home/saleh/webKinPred/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
+        "KM":   "/home/saleh/webKinPred/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
+    }
 
+# ── Seqmap ────────────────────────────────────────────────────────────────────
 
-def resolve_seq_ids_via_cli(sequences):
-    """Call the seqmap CLI once to resolve IDs for all sequences (increments uses_count)."""
+def resolve_seq_ids_via_cli(sequences: list[str]) -> list[str]:
     payload = "\n".join(sequences) + "\n"
-    cmd = [SEQMAP_PY, SEQMAP_CLI, "--db", SEQMAP_DB, "batch-get-or-create", "--stdin"]
-    proc = subprocess.run(
-        cmd, input=payload, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
+    cmd = [SEQMAP_PY, str(SEQMAP_CLI), "--db", str(SEQMAP_DB), "batch-get-or-create", "--stdin"]
+    proc = subprocess.run(cmd, input=payload, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0:
         raise RuntimeError(
-            f"seqmap CLI failed (rc={proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+            f"seqmap CLI failed (rc={proc.returncode})\n"
+            f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
         )
     ids = proc.stdout.strip().splitlines()
     if len(ids) != len(sequences):
-        raise RuntimeError(
-            f"seqmap returned {len(ids)} ids for {len(sequences)} sequences"
-        )
+        raise RuntimeError(f"seqmap returned {len(ids)} ids for {len(sequences)} sequences")
     return ids
 
 
-os.makedirs(ESM_EMB_DIR, exist_ok=True)
-esm_model = None
-alphabet = None
-batch_converter = None
+# ── ESM1v (lazy singleton) ────────────────────────────────────────────────────
+
+_esm_model = None
+_alphabet = None
+_batch_converter = None
 
 
-def load_esm_model_once():
-    global esm_model, alphabet, batch_converter
-    if esm_model is None:
-        # Determine model path based on environment variables
-        if os.environ.get("EITLEM_MEDIA_PATH"):
-            # Docker environment
-            model_location = "/app/models/EITLEM/Weights/esm1v/esm1v_t33_650M_UR90S_1.pt"
-        else:
-            # Local environment
-            model_location = "/home/saleh/webKinPred/models/EITLEM/Weights/esm1v/esm1v_t33_650M_UR90S_1.pt"
-
-        esm_model, alphabet = esm.pretrained.load_model_and_alphabet_local(
-            model_location=model_location
-        )
-        batch_converter = alphabet.get_batch_converter()
-        esm_model.eval()
+def _load_esm_once() -> None:
+    global _esm_model, _alphabet, _batch_converter
+    if _esm_model is not None:
+        return
+    import esm as esm_lib
+    _esm_model, _alphabet = esm_lib.pretrained.load_model_and_alphabet_local(_ESM_MODEL_PATH)
+    _batch_converter = _alphabet.get_batch_converter()
+    _esm_model.eval()
 
 
-def main():
+def _compute_residue_repr(sequence: str) -> np.ndarray:
+    """Return ESM1v layer-33 per-residue representations on CPU.
+
+    Returns an ndarray of shape (seq_len, 1280) — the full matrix that the
+    EITLEM GNN receives as `pro_emb`.
+    """
+    _load_esm_once()
+
+    # ESM1v maximum context is 1024 tokens (incl. <cls>/<eos>) → seq ≤ 1022.
+    if len(sequence) > 1022:
+        sequence = sequence[:500] + sequence[-500:]
+
+    _, _, batch_tokens = _batch_converter([("protein", sequence)])
+    batch_lens = (batch_tokens != _alphabet.padding_idx).sum(1)
+
+    with torch.no_grad():
+        results = _esm_model(batch_tokens, repr_layers=[33], return_contacts=False)
+
+    token_repr = results["representations"][33]
+    tokens_len = batch_lens[0]
+    # Strip <cls> (position 0) and <eos> (position tokens_len-1).
+    return token_repr[0, 1 : tokens_len - 1].cpu().numpy()  # (seq_len, 1280)
+
+
+# ── ESM1v cache (esm1v/) ──────────────────────────────────────────────────────
+
+def _emb_path(seq_id: str) -> Path:
+    return ESM_EMB_DIR / f"{seq_id}.npy"
+
+
+def _free_esm() -> None:
+    global _esm_model, _alphabet, _batch_converter
+    _esm_model = None
+    _alphabet = None
+    _batch_converter = None
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main() -> None:
     if len(sys.argv) != 4:
-        print(
-            "Usage: python eitlem_prediction_script.py input_file.csv output_file.csv kinetics_type"
-        )
+        print("Usage: python eitlem_prediction_script.py input.csv output.csv KCAT|KM")
         sys.exit(1)
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
-    kinetics_type = sys.argv[3].upper()  # 'KCAT' or 'KM'
 
-    # Load input data
-    df_input = pd.read_csv(input_file)
-    sequences = df_input["Protein Sequence"].tolist()
-    substrates = df_input["Substrate SMILES"].tolist()
+    input_file    = sys.argv[1]
+    output_file   = sys.argv[2]
+    kinetics_type = sys.argv[3].upper()
 
-    # Resolve all IDs up-front (counts per occurrence, duplicates included)
-    seq_ids = resolve_seq_ids_via_cli(sequences)
-
-    # Define paths to model weights
-    # Define paths to model weights based on environment variables
-    if os.environ.get("EITLEM_MEDIA_PATH"):
-        # Docker environment
-        modelPath = {
-            "KCAT": "/app/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
-            "KM": "/app/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
-        }
-    else:
-        # Local environment
-        modelPath = {
-            "KCAT": "/home/saleh/webKinPred/models/EITLEM/Weights/KCAT/iter8_trainR2_0.9408_devR2_0.7459_RMSE_0.7751_MAE_0.4787",
-            "KM": "/home/saleh/webKinPred/models/EITLEM/Weights/KM/iter8_trainR2_0.9303_devR2_0.7163_RMSE_0.6960_MAE_0.4802",
-        }
-
-    if kinetics_type not in modelPath:
+    if kinetics_type not in _WEIGHT_PATHS:
         print(f"Invalid kinetics type: {kinetics_type}")
         sys.exit(1)
 
-    # Load EITLEM model
+    df_input   = pd.read_csv(input_file)
+    sequences  = df_input["Protein Sequence"].tolist()
+    substrates = df_input["Substrate SMILES"].tolist()
+
+    seq_ids = resolve_seq_ids_via_cli(sequences)
+
+    # ── Phase 1: ensure all ESM1v embeddings are on disk ─────────────────────
+    # GPU case: files already written by the GPU server before this script runs.
+    # CPU fallback: compute them now with ESM1v loaded once, then free the model
+    # so it doesn't compete with the GNN for RAM during Phase 2.
+    ESM_EMB_DIR.mkdir(parents=True, exist_ok=True)
+    missing_ids, _ready_ids = resolve_missing_ids(
+        seq_ids,
+        cache_dir=ESM_EMB_DIR,
+        suffix=".npy",
+    )
+    if missing_ids:
+        seq_by_id: dict[str, str] = {}
+        for seq_id, sequence in zip(seq_ids, sequences):
+            seq_by_id.setdefault(seq_id, sequence)
+        async_workers = max(
+            1,
+            int(
+                os.environ.get(
+                    "EITLEM_CACHE_ASYNC_WORKERS",
+                    os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"),
+                )
+            ),
+        )
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+        with SpoolAsyncCommitter(
+            max_workers=async_workers,
+            spool_dir=spool_dir,
+            spool_fallback_dir=spool_fallback,
+        ) as committer:
+            for seq_id in missing_ids:
+                sequence = seq_by_id[seq_id]
+                rep = _compute_residue_repr(sequence)
+                committer.submit_numpy(cache_dir=ESM_EMB_DIR, seq_id=seq_id, array=rep)
+    _free_esm()
+
+    # Load EITLEM prediction model only after ESM1v has been freed.
     if kinetics_type == "KCAT":
         eitlem_model = EitlemKcatPredictor(167, 512, 1280, 10, 0.5, 10)
-    elif kinetics_type == "KM":
+    else:
         eitlem_model = EitlemKmPredictor(167, 512, 1280, 10, 0.5, 10)
 
     eitlem_model.load_state_dict(
-        torch.load(modelPath[kinetics_type], map_location=torch.device("cpu"))
+        torch.load(_WEIGHT_PATHS[kinetics_type], map_location=torch.device("cpu"))
     )
     eitlem_model.eval()
 
-    predictions = []
-    total_predictions = len(sequences)
-    i = 0  # Counter for predictions made
+    # ── Phase 2: GNN inference, one sample at a time ─────────────────────────
+    _BATCH_SIZE = 1
+    total = len(sequences)
+    predictions: list[float | None] = [None] * total
 
-    for idx, (sequence, substrate, seq_id) in enumerate(
-        zip(sequences, substrates, seq_ids)
-    ):
+    pending_indices: list[int] = []
+    pending_data:    list[Data] = []
+
+    def _flush_batch() -> None:
+        if not pending_indices:
+            return
+        batch = Batch.from_data_list(pending_data, follow_batch=["pro_emb"])
+        with torch.no_grad():
+            res = eitlem_model(batch)
+        for local_i, global_idx in enumerate(pending_indices):
+            predictions[global_idx] = math.pow(10, res[local_i].item())
+        pending_indices.clear()
+        pending_data.clear()
+
+    for idx, (sequence, substrate, seq_id) in enumerate(zip(sequences, substrates, seq_ids)):
         try:
-            # Convert substrate SMILES to molecule
             mol = Chem.MolFromSmiles(substrate)
             if mol is None:
                 raise ValueError(f"Invalid substrate SMILES: {substrate}")
 
-            # Compute MACCS Keys
-            mol_feature = MACCSkeys.GenMACCSKeys(mol).ToList()
+            mol_feature = torch.FloatTensor(MACCSkeys.GenMACCSKeys(mol).ToList())
+            sequence_rep = torch.FloatTensor(np.load(str(_emb_path(seq_id))))
 
-            vec_path = os.path.join(ESM_EMB_DIR, f"{seq_id}.npy")
-            if os.path.exists(vec_path):
-                rep = np.load(vec_path)
-            else:
-                load_esm_model_once()
-                sequence_for_embedding = sequence
-                if len(sequence_for_embedding) > 1023:
-                    # take first 500 + last 500 residues
-                    sequence_for_embedding = (
-                        sequence_for_embedding[:500] + sequence_for_embedding[-500:]
-                    )
-                data = [("protein", sequence_for_embedding)]
-                _, _, batch_tokens = batch_converter(data)
-                batch_lens = (batch_tokens != alphabet.padding_idx).sum(1)
-                with torch.no_grad():
-                    results = esm_model(
-                        batch_tokens, repr_layers=[33], return_contacts=False
-                    )
-                token_representations = results["representations"][33]
-                tokens_len = batch_lens[0]
-                rep = token_representations[0, 1 : tokens_len - 1].cpu().numpy()
-                np.save(vec_path, rep)
+            pending_indices.append(idx)
+            pending_data.append(Data(x=mol_feature.unsqueeze(0), pro_emb=sequence_rep))
 
-            # Use mean of per-residue embedding
-            sequence_rep = torch.FloatTensor(rep)
-            sample = Data(
-                x=torch.FloatTensor(mol_feature).unsqueeze(0), pro_emb=sequence_rep
-            )
+            if len(pending_indices) == _BATCH_SIZE:
+                _flush_batch()
 
-            input_data = Batch.from_data_list([sample], follow_batch=["pro_emb"])
+        except Exception as exc:
+            print(f"Error processing sample {idx}: {exc}")
 
-            # Predict kinetics value
-            with torch.no_grad():
-                res = eitlem_model(input_data)
-            prediction = math.pow(10, res[0].item())
-            predictions.append(prediction)
-        except Exception as e:
-            print(f"Error processing sample {idx}: {e}")
-            predictions.append(None)
-        finally:
-            i += 1
-            print(f"Progress: {i}/{total_predictions} predictions made", flush=True)
+        print(f"Progress: {idx + 1}/{total}", flush=True)
 
-    # Save predictions to output file
-    df_output = pd.DataFrame(
+    _flush_batch()
+
+    # ── Cleanup ephemeral ESM1v files ─────────────────────────────────────────
+    # Delete every esm1v file for sequences in this job unless this run is
+    # asked to preserve embeddings for another target stage in the same job.
+    if _DELETE_EMBEDDINGS_AFTER_RUN:
+        for seq_id in set(seq_ids):
+            try:
+                _emb_path(seq_id).unlink(missing_ok=True)
+            except OSError:
+                pass  # best-effort cleanup
+
+    # ── Write output CSV ──────────────────────────────────────────────────────
+    pd.DataFrame(
         {
             "Substrate SMILES": substrates,
             "Protein Sequence": sequences,
-            "Predicted Value": predictions,
+            "Predicted Value":  predictions,
         }
-    )
-    df_output.to_csv(output_file, index=False)
+    ).to_csv(output_file, index=False)
 
 
 if __name__ == "__main__":

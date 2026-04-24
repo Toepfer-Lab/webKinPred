@@ -11,6 +11,8 @@ import subprocess
 import numpy as np
 import pandas as pd
 
+import logging
+
 from api.methods.base import PredictionError
 from api.models import Job
 from api.prediction_engines.subprocess_runner import run_prediction_subprocess
@@ -20,6 +22,13 @@ from api.prediction_engines.runtime_paths import (
     PYTHON_PATHS,
 )
 from api.services.gpu_embed_service import run_gpu_precompute_if_available
+from api.services.job_progress_service import (
+    increment_stage_validation,
+    reset_stage_prediction_metrics,
+    set_stage_prediction_total,
+)
+
+_log = logging.getLogger(__name__)
 from api.utils.convert_to_mol import convert_to_mol, substrate_as_smiles
 from webKinPred.settings import MEDIA_ROOT
 
@@ -62,14 +71,14 @@ def unikp_predictions(
         On subprocess failure or any unrecoverable error.
     """
     print(f"Running UniKP model (kinetics_type={kinetics_type})...")
+    stage_target = "kcat" if kinetics_type.upper() == "KCAT" else "Km"
 
     job = Job.objects.get(public_id=public_id)
-    job.molecules_processed = 0
-    job.invalid_rows = 0
-    job.predictions_made = 0
-    job.total_molecules = len(sequences)
-    job.save(
-        update_fields=["molecules_processed", "invalid_rows", "predictions_made", "total_molecules"]
+    reset_stage_prediction_metrics(
+        job_public_id=public_id,
+        target=stage_target,
+        method_key="UniKP",
+        total_rows=len(sequences),
     )
 
     python_path = PYTHON_PATHS.get("UniKP", "")
@@ -92,7 +101,6 @@ def unikp_predictions(
 
     # ── Validate inputs molecule by molecule ──────────────────────────────────
     for idx, (seq, substrate) in enumerate(zip(sequences, substrates)):
-        job.molecules_processed += 1
         seq_valid = all(c in _AMINO_ACIDS for c in seq)
         mol = convert_to_mol(substrate)
 
@@ -114,23 +122,45 @@ def unikp_predictions(
             )
             print(f"  Row {idx + 1}: {reason}")
             invalid_reasons[idx] = reason
-            job.invalid_rows += 1
+            increment_stage_validation(
+                job_public_id=public_id,
+                target=stage_target,
+                method_key="UniKP",
+                processed_inc=1,
+                invalid_inc=1,
+            )
+            continue
 
-        job.save(update_fields=["molecules_processed", "invalid_rows"])
+        increment_stage_validation(
+            job_public_id=public_id,
+            target=stage_target,
+            method_key="UniKP",
+            processed_inc=1,
+            invalid_inc=0,
+        )
 
-    job.total_predictions = len(valid_indices)
-    job.save(update_fields=["total_predictions"])
+    set_stage_prediction_total(
+        job_public_id=public_id,
+        target=stage_target,
+        method_key="UniKP",
+        total_predictions=len(valid_indices),
+    )
 
     if not valid_indices:
         return predictions, invalid_reasons
 
-    run_gpu_precompute_if_available(
+    _gpu = run_gpu_precompute_if_available(
         job_public_id=public_id,
         method_key="UniKP",
-        target="kcat" if kinetics_type.upper() == "KCAT" else "Km",
+        target=stage_target,
         valid_sequences=valid_sequences,
         env=env,
     )
+    if _gpu.attempted and not _gpu.completed:
+        _log.warning(
+            "GPU precompute incomplete for UniKP job %s: %s (used_gpu=%s, failed=%s)",
+            public_id, _gpu.reason, _gpu.used_gpu, _gpu.failed,
+        )
 
     # ── Write CSV input file ──────────────────────────────────────────────────
     try:
@@ -154,7 +184,7 @@ def unikp_predictions(
             env=env,
             label="UniKP",
             method_key="UniKP",
-            target="kcat" if kinetics_type.upper() == "KCAT" else "Km",
+            target=stage_target,
             valid_sequences=valid_sequences,
         )
     except subprocess.CalledProcessError as e:

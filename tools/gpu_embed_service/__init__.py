@@ -1,0 +1,2 @@
+"""GPU embedding service package."""
+

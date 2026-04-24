@@ -15,12 +15,17 @@ from pathlib import Path
 
 
 STEP_CHOICES = (
-    "kinform_pseq2sites",
+    "kinform_t5_full",
     "kinform_esm2_layers",
     "kinform_esmc_layers",
-    "kinform_prott5_layers",
     "prot_t5_mean",
     "turnup_esm1b",
+    "eitlem_esm1v",
+    "catpred_embed_kcat",
+    "catpred_embed_km",
+    # Deprecated: superseded by kinform_t5_full
+    "kinform_pseq2sites",
+    "kinform_prott5_layers",
 )
 
 
@@ -44,6 +49,29 @@ def _run(cmd: list[str], env: dict[str, str]) -> None:
 
 def _parse_seq_ids(raw: str) -> list[str]:
     return [sid.strip() for sid in raw.split(",") if sid.strip()]
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = str(os.environ.get(name, "")).strip()
+    if not raw:
+        return int(default)
+    try:
+        value = int(raw)
+    except ValueError:
+        return int(default)
+    return value if value > 0 else int(default)
 
 
 def _load_seq_id_to_seq(seq_ids: list[str], seqmap_db: Path) -> dict[str, str]:
@@ -95,7 +123,17 @@ def _kinform_env(repo_root: Path, media_path: Path, tools_path: Path) -> dict[st
     ).resolve()
     if t5_model_default.exists():
         env.setdefault("KINFORM_T5_MODEL_PATH", str(t5_model_default))
+    # GPU embed service should run embedding workloads on CUDA, not CPU fallback.
+    env.setdefault("KINFORM_REQUIRE_CUDA", "1")
     env.setdefault("GPU_REPO_ROOT", str(repo_root))
+    repo_root_str = str(repo_root)
+    existing_pythonpath = str(env.get("PYTHONPATH", "")).strip()
+    if existing_pythonpath:
+        parts = [p for p in existing_pythonpath.split(os.pathsep) if p]
+        if repo_root_str not in parts:
+            env["PYTHONPATH"] = os.pathsep.join([repo_root_str] + parts)
+    else:
+        env["PYTHONPATH"] = repo_root_str
     return env
 
 
@@ -216,6 +254,138 @@ def _run_kinform_t5(
     _run(cmd, env)
 
 
+def _run_prot_t5_mean(env: dict[str, str], seq_map_json: Path) -> None:
+    t5_python = env["KINFORM_T5_PATH"]
+    worker_script = (
+        Path(env["GPU_REPO_ROOT"]) / "tools" / "gpu_embed_service" / "prot_t5_mean_worker.py"
+    ).resolve()
+    _ensure_exists(worker_script, "prot_t5_mean_worker.py")
+
+    cache_dir = (Path(env["KINFORM_MEDIA_PATH"]) / "sequence_info" / "prot_t5_last" / "mean_vecs").resolve()
+    batch_size = _env_int("GPU_EMBED_PROT_T5_MEAN_BATCH_SIZE", 8)
+    async_workers = _env_int("GPU_EMBED_CACHE_ASYNC_WORKERS", 8)
+
+    _run(
+        [
+            t5_python,
+            str(worker_script),
+            "--seq-id-to-seq-file",
+            str(seq_map_json),
+            "--cache-dir",
+            str(cache_dir),
+            "--batch-size",
+            str(batch_size),
+            "--async-workers",
+            str(async_workers),
+        ],
+        env,
+    )
+
+
+def _run_kinform_t5_full_legacy_only(
+    env: dict[str, str],
+    seq_file: Path,
+    id_to_seq_pkl: Path,
+    seq_map_json: Path,
+) -> None:
+    """Single T5 load path with early progress-visible cache writes.
+
+    Flow:
+    1) residue+mean for layers 19 + last (single model load)
+    2) binding-site prediction from saved last-layer residue
+    3) weighted vectors derived from residue files (no T5 reload)
+    """
+    script = (
+        Path(env["GPU_REPO_ROOT"]) / "models" / "KinForm" / "code" / "protein_embeddings" / "t5_embeddings.py"
+    ).resolve()
+    bs_pred = (Path(env["KINFORM_MEDIA_PATH"]) / "pseq2sites" / "binding_sites_all.tsv").resolve()
+    base_cmd = [
+        env["KINFORM_T5_PATH"],
+        str(script),
+        "--seq_file", str(seq_file),
+        "--id_to_seq_file", str(id_to_seq_pkl),
+        "--batch_size", "1",
+    ]
+
+    # Phase 1: extract residue + mean for layers 19 + last in one model load.
+    # Writing mean_vecs here lets embedding_progress track real progress while
+    # weighted vectors wait for binding-site prediction.
+    _run(base_cmd + ["--setting", "residue+mean", "--layers", "19", "None"], env)
+
+    # Phase 2: predict binding sites — last-layer residue is already on disk, T5 is a no-op
+    _run_kinform_pseq2sites(env, seq_map_json)
+
+    # Phase 3: derive weighted from saved residue (Smart Reuse, no T5 reload).
+    _run(
+        base_cmd + [
+            "--setting", "weighted",
+            "--weights_file", str(bs_pred),
+            "--layers", "19", "None",
+        ],
+        env,
+    )
+
+
+def _run_kinform_t5_full_legacy_with_esm(
+    env: dict[str, str],
+    seq_file: Path,
+    id_to_seq_pkl: Path,
+    seq_map_json: Path,
+) -> None:
+    _run_kinform_t5_full_legacy_only(env, seq_file, id_to_seq_pkl, seq_map_json)
+    _run_kinform_esm2(env, seq_file, id_to_seq_pkl)
+    _run_kinform_esmc(env, seq_file, id_to_seq_pkl)
+
+
+def _run_kinform_t5_full(
+    env: dict[str, str],
+    seq_file: Path,
+    id_to_seq_pkl: Path,
+    seq_map_json: Path,
+    *,
+    seq_id_to_seq: dict[str, str],
+    job_id: str | None = None,
+) -> None:
+    parallel_enabled = _env_bool("KINFORM_PARALLEL_EMBED_ENABLE", True)
+    allow_fallback = _env_bool("KINFORM_PARALLEL_EMBED_ALLOW_LEGACY_FALLBACK", True)
+
+    if not parallel_enabled:
+        _run_kinform_t5_full_legacy_only(env, seq_file, id_to_seq_pkl, seq_map_json)
+        return
+
+    orchestrator_script = (
+        Path(env["GPU_REPO_ROOT"]) / "tools" / "gpu_embed_service" / "kinform_parallel_orchestrator.py"
+    ).resolve()
+    _ensure_exists(orchestrator_script, "kinform parallel orchestrator script")
+
+    try:
+        _run(
+            [
+                env["KINFORM_T5_PATH"],
+                str(orchestrator_script),
+                "--seq-id-to-seq-file",
+                str(seq_map_json),
+                "--repo-root",
+                str(Path(env["GPU_REPO_ROOT"]).resolve()),
+                "--media-path",
+                str(Path(env["KINFORM_MEDIA_PATH"]).resolve()),
+                "--job-id",
+                str(job_id or ""),
+            ],
+            env,
+        )
+        return
+    except Exception as exc:
+        if not allow_fallback:
+            raise
+        print(
+            "KINFORM_PARALLEL_FALLBACK "
+            f"job_id={job_id or 'unknown'} "
+            f"reason={exc.__class__.__name__}:{exc}"
+        )
+        _run_kinform_t5_full_legacy_with_esm(env, seq_file, id_to_seq_pkl, seq_map_json)
+
+
 def _run_turnup(env: dict[str, str], seq_map_json: Path) -> None:
     turnup_env = dict(env)
     turnup_env.setdefault("TURNUP_MEDIA_PATH", env["KINFORM_MEDIA_PATH"])
@@ -229,21 +399,124 @@ def _run_turnup(env: dict[str, str], seq_map_json: Path) -> None:
         or os.environ.get("KINFORM_ESM_PATH")
         or _python_in_home_env("esm")
     )
-    code = r"""
-import json
-import os
-import sys
-from pathlib import Path
+    worker_script = (
+        Path(env["GPU_REPO_ROOT"]) / "tools" / "gpu_embed_service" / "turnup_esm1b_worker.py"
+    ).resolve()
+    _ensure_exists(worker_script, "turnup_esm1b_worker.py")
+    cache_dir = (Path(turnup_env["TURNUP_MEDIA_PATH"]) / "sequence_info" / "esm1b_turnup").resolve()
+    batch_size = _env_int("GPU_EMBED_TURNUP_ESM1B_BATCH_SIZE", 8)
+    async_workers = _env_int("GPU_EMBED_CACHE_ASYNC_WORKERS", 8)
+    _run(
+        [
+            turnup_python,
+            str(worker_script),
+            "--seq-id-to-seq-file",
+            str(seq_map_json),
+            "--cache-dir",
+            str(cache_dir),
+            "--batch-size",
+            str(batch_size),
+            "--async-workers",
+            str(async_workers),
+        ],
+        turnup_env,
+    )
 
-repo_root = Path(os.environ["GPU_REPO_ROOT"]).resolve()
-sys.path.insert(0, str(repo_root / "models" / "TurNup" / "code"))
-from enzyme_representations import calcualte_esm1b_ts_vectors
 
-seq_map = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-seqs = list(dict.fromkeys(seq_map.values()))
-calcualte_esm1b_ts_vectors(seqs)
-"""
-    _run([turnup_python, "-c", code, str(seq_map_json)], turnup_env)
+def _run_eitlem_esm1v(env: dict[str, str], seq_map_json: Path) -> None:
+    """Compute ESM1v layer-33 per-residue representations for EITLEM on GPU."""
+    eitlem_python = (
+        os.environ.get("EITLEM_EMBED_PYTHON")
+        or os.environ.get("KINFORM_ESM_PATH")  # esm conda env includes ESM1v
+        or _python_in_home_env("eitlem_env")
+    )
+    eitlem_env = dict(env)
+    eitlem_env.setdefault("EITLEM_MEDIA_PATH", env.get("KINFORM_MEDIA_PATH", ""))
+    eitlem_env.setdefault("GPU_REPO_ROOT", env.get("GPU_REPO_ROOT", ""))
+    worker_script = (
+        Path(env["GPU_REPO_ROOT"]) / "tools" / "gpu_embed_service" / "eitlem_esm1v_worker.py"
+    ).resolve()
+    _ensure_exists(worker_script, "eitlem_esm1v_worker.py")
+    cache_media = eitlem_env.get("EITLEM_MEDIA_PATH") or env.get("KINFORM_MEDIA_PATH", "")
+    if not cache_media:
+        raise RuntimeError("Missing EITLEM/KINFORM media path for eitlem_esm1v step.")
+    cache_dir = (Path(cache_media) / "sequence_info" / "esm1v").resolve()
+    batch_size = _env_int("GPU_EMBED_EITLEM_ESM1V_BATCH_SIZE", 4)
+    async_workers = _env_int("GPU_EMBED_CACHE_ASYNC_WORKERS", 8)
+    _run(
+        [
+            eitlem_python,
+            str(worker_script),
+            "--seq-id-to-seq-file",
+            str(seq_map_json),
+            "--cache-dir",
+            str(cache_dir),
+            "--batch-size",
+            str(batch_size),
+            "--async-workers",
+            str(async_workers),
+        ],
+        eitlem_env,
+    )
+
+
+def _run_catpred_embed(parameter: str, env: dict[str, str], seq_map_json: Path) -> None:
+    """Compute CatPred ESM2 + attention-pooled embeddings on GPU.
+
+    Calls the standalone catpred_embed_gpu.py script which handles ESM2
+    inference and per-checkpoint attentive pooling, saving pooled .pt tensors
+    to the shared cache so the production adapter can skip embedding entirely.
+    """
+    catpred_python = (
+        os.environ.get("CATPRED_EMBED_PYTHON")
+        or _python_in_home_env("catpred_env")
+    )
+    repo_root = Path(env.get("GPU_REPO_ROOT", str(_default_repo_root()))).resolve()
+    script = (
+        repo_root / "models" / "CatPred" / "catpred" / "integration" / "catpred_embed_gpu.py"
+    ).resolve()
+    _ensure_exists(script, "catpred_embed_gpu.py")
+
+    checkpoint_root = (
+        os.environ.get("CATPRED_CHECKPOINT_ROOT")
+        or str((repo_root / "models" / "CatPred" / ".e2e-assets" / "pretrained" / "production").resolve())
+    )
+    media_path = (
+        env.get("CATPRED_MEDIA_PATH")
+        or env.get("KINFORM_MEDIA_PATH")
+        or os.environ.get("CATPRED_MEDIA_PATH")
+        or os.environ.get("KINFORM_MEDIA_PATH", "")
+    )
+    cache_root = (
+        os.environ.get("CATPRED_CACHE_ROOT")
+        or (str((Path(media_path) / "sequence_info" / "catpred_esm2").resolve()) if media_path else "")
+    )
+    if not cache_root:
+        raise RuntimeError(
+            "Cannot determine CatPred cache root: set CATPRED_CACHE_ROOT or "
+            "CATPRED_MEDIA_PATH / KINFORM_MEDIA_PATH."
+        )
+
+    catpred_env = dict(env)
+    # Ensure the checkpoint root is trusted for torch.load deserialization.
+    existing_roots = catpred_env.get("CATPRED_TRUSTED_DESERIALIZATION_ROOTS", "")
+    trusted = [r for r in existing_roots.split(os.pathsep) if r.strip()]
+    if checkpoint_root not in trusted:
+        trusted.append(checkpoint_root)
+    catpred_env["CATPRED_TRUSTED_DESERIALIZATION_ROOTS"] = os.pathsep.join(trusted)
+    catpred_env.setdefault("CATPRED_ALLOW_UNSAFE_DESERIALIZATION", "1")
+
+    _run(
+        [
+            catpred_python,
+            str(script),
+            "--seq-id-to-seq-file", str(seq_map_json),
+            "--parameter", parameter,
+            "--checkpoint-root", checkpoint_root,
+            "--cache-root", cache_root,
+        ],
+        catpred_env,
+    )
 
 
 def run_step(
@@ -254,6 +527,7 @@ def run_step(
     tools_path: Path,
     *,
     seq_id_to_seq: dict[str, str] | None = None,
+    job_id: str | None = None,
 ) -> None:
     if not seq_ids:
         print("No sequence IDs provided; nothing to do.")
@@ -271,18 +545,33 @@ def run_step(
     env = _kinform_env(repo_root=repo_root, media_path=media_path, tools_path=tools_path)
 
     try:
-        if step == "kinform_pseq2sites":
-            _run_kinform_pseq2sites(env, seq_map_json)
+        if step == "kinform_t5_full":
+            _run_kinform_t5_full(
+                env,
+                seq_file,
+                id_to_seq_pkl,
+                seq_map_json,
+                seq_id_to_seq=seq_id_to_seq,
+                job_id=job_id,
+            )
         elif step == "kinform_esm2_layers":
             _run_kinform_esm2(env, seq_file, id_to_seq_pkl)
         elif step == "kinform_esmc_layers":
             _run_kinform_esmc(env, seq_file, id_to_seq_pkl)
-        elif step == "kinform_prott5_layers":
-            _run_kinform_t5(env, seq_file, id_to_seq_pkl, mean_only=False)
         elif step == "prot_t5_mean":
-            _run_kinform_t5(env, seq_file, id_to_seq_pkl, mean_only=True)
+            _run_prot_t5_mean(env, seq_map_json)
         elif step == "turnup_esm1b":
             _run_turnup(env, seq_map_json)
+        elif step == "eitlem_esm1v":
+            _run_eitlem_esm1v(env, seq_map_json)
+        elif step == "catpred_embed_kcat":
+            _run_catpred_embed("kcat", env, seq_map_json)
+        elif step == "catpred_embed_km":
+            _run_catpred_embed("km", env, seq_map_json)
+        elif step == "kinform_pseq2sites":
+            _run_kinform_pseq2sites(env, seq_map_json)
+        elif step == "kinform_prott5_layers":
+            _run_kinform_t5(env, seq_file, id_to_seq_pkl, mean_only=False)
         else:
             raise RuntimeError(f"Unsupported step: {step}")
     finally:
@@ -296,6 +585,7 @@ def main() -> int:
     parser.add_argument("--repo-root", default=os.environ.get("GPU_EMBED_REPO_ROOT", ""))
     parser.add_argument("--media-path", default=os.environ.get("KINFORM_MEDIA_PATH", ""))
     parser.add_argument("--tools-path", default=os.environ.get("KINFORM_TOOLS_PATH", ""))
+    parser.add_argument("--job-id", default=os.environ.get("GPU_EMBED_JOB_ID", ""))
     parser.add_argument(
         "--seq-id-to-seq-json",
         default="",
@@ -326,6 +616,7 @@ def main() -> int:
         media_path=media_path,
         tools_path=tools_path,
         seq_id_to_seq=seq_id_to_seq,
+        job_id=(args.job_id or None),
     )
     return 0
 

@@ -24,6 +24,14 @@ from rdkit.Chem import MACCSkeys
 from torch.utils.data import DataLoader, Dataset
 from transformers import T5EncoderModel, T5Tokenizer
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT_STR = str(_REPO_ROOT)
+if _REPO_ROOT_STR in sys.path:
+    sys.path.remove(_REPO_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
+
 from act_model import ActivityModel
 from model import KcatModel, KmModel
 
@@ -154,15 +162,14 @@ def get_prott5_embeddings(
 ) -> np.ndarray:
     cache_dir.mkdir(parents=True, exist_ok=True)
     seq_ids = resolve_seq_ids_via_cli(sequences, seqmap_cli, seqmap_db)
-
-    missing_by_seq_id: dict[str, tuple[str, Path]] = {}
+    missing_ids, _ready_ids = resolve_missing_ids(seq_ids, cache_dir=cache_dir, suffix=".npy")
+    missing_set = set(missing_ids)
+    missing_by_seq_id: dict[str, str] = {}
     for seq, seq_id in zip(sequences, seq_ids):
-        fp = cache_dir / f"{seq_id}.npy"
-        if fp.exists() or seq_id in missing_by_seq_id:
+        if seq_id not in missing_set or seq_id in missing_by_seq_id:
             continue
-        # The shared ProtT5 cache is keyed by seq_id, so repeated sequences in
-        # the same request only need one embedding pass.
-        missing_by_seq_id[seq_id] = (seq, fp)
+        # Shared ProtT5 cache is keyed by seq_id; repeated sequences embed once.
+        missing_by_seq_id[seq_id] = seq
 
     tokenizer = None
     model = None
@@ -180,10 +187,25 @@ def get_prott5_embeddings(
             torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
         ).to(device)
         model.eval()
-
-        for seq, fp in missing_by_seq_id.values():
-            emb = _compute_prott5_mean_embedding(seq, tokenizer, model, device)
-            np.save(fp, emb)
+        async_workers = max(
+            1,
+            int(
+                os.environ.get(
+                    "CATAPRO_CACHE_ASYNC_WORKERS",
+                    os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"),
+                )
+            ),
+        )
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+        with SpoolAsyncCommitter(
+            max_workers=async_workers,
+            spool_dir=spool_dir,
+            spool_fallback_dir=spool_fallback,
+        ) as committer:
+            for seq_id, seq in missing_by_seq_id.items():
+                emb = _compute_prott5_mean_embedding(seq, tokenizer, model, device)
+                committer.submit_numpy(cache_dir=cache_dir, seq_id=seq_id, array=emb)
 
     out = []
     for seq_id in seq_ids:
@@ -198,6 +220,22 @@ def get_molt5_embeddings(
     device: torch.device,
     batch_size: int = 32,
 ) -> np.ndarray:
+    if not smiles_list:
+        return np.zeros((0, 768), dtype=np.float32)
+
+    # Compute MolT5 embeddings once per unique substrate, then map back to
+    # the original row order.
+    unique_smiles: list[str] = []
+    unique_index_by_smiles: dict[str, int] = {}
+    row_to_unique_idx: list[int] = []
+    for smiles in smiles_list:
+        idx = unique_index_by_smiles.get(smiles)
+        if idx is None:
+            idx = len(unique_smiles)
+            unique_index_by_smiles[smiles] = idx
+            unique_smiles.append(smiles)
+        row_to_unique_idx.append(idx)
+
     tokenizer = T5Tokenizer.from_pretrained(str(model_path), local_files_only=True)
     model = T5EncoderModel.from_pretrained(
         str(model_path),
@@ -206,9 +244,9 @@ def get_molt5_embeddings(
     ).to(device)
     model.eval()
 
-    embeddings: list[np.ndarray] = []
-    for start in range(0, len(smiles_list), batch_size):
-        batch = smiles_list[start : start + batch_size]
+    unique_embeddings: list[np.ndarray] = []
+    for start in range(0, len(unique_smiles), batch_size):
+        batch = unique_smiles[start : start + batch_size]
         encoded = tokenizer(
             batch,
             return_tensors="pt",
@@ -226,9 +264,10 @@ def get_molt5_embeddings(
         for idx in range(hidden.shape[0]):
             seq_len = int(attn[idx].sum())
             vec = hidden[idx][: max(seq_len - 1, 1)].mean(axis=0)
-            embeddings.append(vec.astype(np.float32))
+            unique_embeddings.append(vec.astype(np.float32))
 
-    return np.stack(embeddings).astype(np.float32)
+    unique_arr = np.stack(unique_embeddings).astype(np.float32)
+    return unique_arr[np.asarray(row_to_unique_idx, dtype=np.int64)]
 
 
 def get_maccs(smiles_list: list[str]) -> np.ndarray:
@@ -351,9 +390,9 @@ def run_catapro(
     dataloader = DataLoader(FeatureDataset(feats), batch_size=32, shuffle=False)
     total_predictions = int(feats.shape[0])
 
+    _SUBDIR = {"KCAT": "kcat_models", "KM": "Km_models", "KCAT/KM": "act_models"}
     fold_models = []
-    _, subdir = _build_model(kinetics_type, device)
-    model_dir = model_root / "models" / subdir
+    model_dir = model_root / "models" / _SUBDIR[kinetics_type]
     if not model_dir.exists():
         raise RuntimeError(f"CataPro model directory not found: {model_dir}")
 

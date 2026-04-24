@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import logging
 import subprocess
 from typing import Any
 
@@ -23,6 +24,13 @@ from api.prediction_engines.runtime_paths import (
     PYTHON_PATHS,
 )
 from api.services.gpu_embed_service import run_gpu_precompute_if_available
+from api.services.job_progress_service import (
+    increment_stage_validation,
+    reset_stage_prediction_metrics,
+    set_stage_prediction_total,
+)
+
+_log = logging.getLogger(__name__)
 from api.prediction_engines.subprocess_runner import run_prediction_subprocess
 from api.utils.convert_to_mol import convert_to_mol
 from webKinPred.settings import MEDIA_ROOT
@@ -63,7 +71,7 @@ def run_generic_subprocess_prediction(
         raise PredictionError(f"{desc.display_name} is not configured with a subprocess engine.")
 
     job = Job.objects.get(public_id=public_id)
-    _initialise_job_progress(job, len(sequences))
+    _initialise_job_progress(job, len(sequences), method_key=desc.key, target=target)
 
     row_kwarg_names = list(dict.fromkeys(desc.col_to_kwarg.values()))
     per_row_inputs = _extract_row_inputs(
@@ -81,24 +89,34 @@ def run_generic_subprocess_prediction(
         input_format=desc.input_format,
         desc=desc,
         job=job,
+        method_key=desc.key,
+        target=target,
     )
 
-    job.total_predictions = len(valid_indices)
-    job.predictions_made = 0
-    job.save(update_fields=["total_predictions", "predictions_made"])
+    set_stage_prediction_total(
+        job_public_id=public_id,
+        target=target,
+        method_key=desc.key,
+        total_predictions=len(valid_indices),
+    )
 
     if not valid_indices:
         return predictions, invalid_reasons
 
     python_path, script_path = _resolve_subprocess_paths(desc)
     env = _build_subprocess_env(desc)
-    run_gpu_precompute_if_available(
+    _gpu = run_gpu_precompute_if_available(
         job_public_id=public_id,
         method_key=desc.key,
         target=target,
         valid_sequences=[str(row.get("sequence", "")) for row in valid_rows],
         env=env,
     )
+    if _gpu.attempted and not _gpu.completed:
+        _log.warning(
+            "GPU precompute incomplete for %s job %s: %s (used_gpu=%s, failed=%s)",
+            desc.key, public_id, _gpu.reason, _gpu.used_gpu, _gpu.failed,
+        )
 
     job_dir = os.path.join(MEDIA_ROOT, "jobs", str(public_id))
     safe_method = re.sub(r"[^A-Za-z0-9_-]+", "_", desc.key)
@@ -189,18 +207,12 @@ def run_generic_subprocess_prediction(
     return predictions, invalid_reasons
 
 
-def _initialise_job_progress(job: Job, total_rows: int) -> None:
-    job.molecules_processed = 0
-    job.invalid_rows = 0
-    job.predictions_made = 0
-    job.total_molecules = total_rows
-    job.save(
-        update_fields=[
-            "molecules_processed",
-            "invalid_rows",
-            "predictions_made",
-            "total_molecules",
-        ]
+def _initialise_job_progress(job: Job, total_rows: int, method_key: str, target: str) -> None:
+    reset_stage_prediction_metrics(
+        job_public_id=job.public_id,
+        target=target,
+        method_key=method_key,
+        total_rows=total_rows,
     )
 
 
@@ -230,6 +242,8 @@ def _validate_rows(
     input_format: str,
     desc: MethodDescriptor,
     job: Job,
+    method_key: str,
+    target: str,
 ) -> tuple[list[dict[str, Any]], list[int], dict[int, str]]:
     cfg = desc.subprocess
     assert cfg is not None
@@ -261,12 +275,22 @@ def _validate_rows(
         if is_valid:
             valid_indices.append(idx)
             valid_rows.append(row)
+            increment_stage_validation(
+                job_public_id=job.public_id,
+                target=target,
+                method_key=method_key,
+                processed_inc=1,
+                invalid_inc=0,
+            )
         else:
             invalid_reasons[idx] = reason
-            job.invalid_rows += 1
-
-        job.molecules_processed += 1
-        job.save(update_fields=["molecules_processed", "invalid_rows"])
+            increment_stage_validation(
+                job_public_id=job.public_id,
+                target=target,
+                method_key=method_key,
+                processed_inc=1,
+                invalid_inc=1,
+            )
 
     return valid_rows, valid_indices, invalid_reasons
 

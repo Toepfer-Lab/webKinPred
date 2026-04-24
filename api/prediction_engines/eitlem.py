@@ -11,6 +11,8 @@ import subprocess
 import numpy as np
 import pandas as pd
 
+import logging
+
 from api.methods.base import PredictionError
 from api.models import Job
 from api.prediction_engines.subprocess_runner import run_prediction_subprocess
@@ -19,10 +21,17 @@ from api.prediction_engines.runtime_paths import (
     PREDICTION_SCRIPTS,
     PYTHON_PATHS,
 )
+from api.services.gpu_embed_service import run_gpu_precompute_if_available
+from api.services.job_progress_service import (
+    increment_stage_validation,
+    reset_stage_prediction_metrics,
+    set_stage_prediction_total,
+)
 from api.utils.convert_to_mol import convert_to_mol, substrate_as_smiles
 from webKinPred.settings import MEDIA_ROOT
 
 _AMINO_ACIDS = set("ACDEFGHIKLMNPQRSTVWY")
+_log = logging.getLogger(__name__)
 
 
 def eitlem_predictions(
@@ -31,6 +40,7 @@ def eitlem_predictions(
     substrates: list[str],
     kinetics_type: str = "KCAT",
     canonicalize_substrates: bool = True,
+    cleanup_esm1v_embeddings: bool = True,
     **kwargs,
 ) -> tuple[list, dict[int, str]]:
     """
@@ -61,14 +71,14 @@ def eitlem_predictions(
         On subprocess failure or any unrecoverable error.
     """
     print(f"Running EITLEM model (kinetics_type={kinetics_type})...")
+    stage_target = "kcat" if kinetics_type.upper() == "KCAT" else "Km"
 
     job = Job.objects.get(public_id=public_id)
-    job.molecules_processed = 0
-    job.invalid_rows = 0
-    job.predictions_made = 0
-    job.total_molecules = len(sequences)
-    job.save(
-        update_fields=["molecules_processed", "invalid_rows", "predictions_made", "total_molecules"]
+    reset_stage_prediction_metrics(
+        job_public_id=public_id,
+        target=stage_target,
+        method_key="EITLEM",
+        total_rows=len(sequences),
     )
 
     python_path = PYTHON_PATHS.get("EITLEM", "")
@@ -82,6 +92,7 @@ def eitlem_predictions(
         env["EITLEM_MEDIA_PATH"] = DATA_PATHS["media"]
     if DATA_PATHS.get("tools"):
         env["EITLEM_TOOLS_PATH"] = DATA_PATHS["tools"]
+    env["EITLEM_DELETE_EMBEDDINGS_AFTER_RUN"] = "1" if cleanup_esm1v_embeddings else "0"
 
     valid_indices: list[int] = []
     invalid_reasons: dict[int, str] = {}
@@ -91,7 +102,6 @@ def eitlem_predictions(
 
     # ── Validate inputs molecule by molecule ──────────────────────────────────
     for idx, (seq, substrate) in enumerate(zip(sequences, substrates)):
-        job.molecules_processed += 1
         seq_valid = all(c in _AMINO_ACIDS for c in seq)
         mol = convert_to_mol(substrate)
 
@@ -113,15 +123,48 @@ def eitlem_predictions(
             )
             print(f"  Row {idx + 1}: {reason}")
             invalid_reasons[idx] = reason
-            job.invalid_rows += 1
+            increment_stage_validation(
+                job_public_id=public_id,
+                target=stage_target,
+                method_key="EITLEM",
+                processed_inc=1,
+                invalid_inc=1,
+            )
+            continue
 
-        job.save(update_fields=["molecules_processed", "invalid_rows"])
+        increment_stage_validation(
+            job_public_id=public_id,
+            target=stage_target,
+            method_key="EITLEM",
+            processed_inc=1,
+            invalid_inc=0,
+        )
 
-    job.total_predictions = len(valid_indices)
-    job.save(update_fields=["total_predictions"])
+    set_stage_prediction_total(
+        job_public_id=public_id,
+        target=stage_target,
+        method_key="EITLEM",
+        total_predictions=len(valid_indices),
+    )
 
     if not valid_indices:
         return predictions, invalid_reasons
+
+    _gpu = run_gpu_precompute_if_available(
+        job_public_id=public_id,
+        method_key="EITLEM",
+        target=stage_target,
+        valid_sequences=valid_sequences,
+        env=env,
+    )
+    if _gpu.attempted and not _gpu.completed:
+        _log.warning(
+            "GPU precompute incomplete for EITLEM job %s: %s (used_gpu=%s, failed=%s)",
+            public_id,
+            _gpu.reason,
+            _gpu.used_gpu,
+            _gpu.failed,
+        )
 
     # ── Write CSV input file ──────────────────────────────────────────────────
     try:
@@ -145,7 +188,7 @@ def eitlem_predictions(
             env=env,
             label="EITLEM",
             method_key="EITLEM",
-            target="kcat" if kinetics_type.upper() == "KCAT" else "Km",
+            target=stage_target,
             valid_sequences=valid_sequences,
         )
     except subprocess.CalledProcessError as e:

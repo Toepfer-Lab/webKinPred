@@ -5,12 +5,102 @@
 # All prediction engines use this helper so that progress reporting and OOM
 # detection are handled consistently in one place.
 
+import re
 import subprocess
 from api.models import Job
 from api.services.embedding_progress_service import (
     start_embedding_tracking,
     stop_embedding_tracking,
 )
+from api.services.job_progress_service import set_stage_prediction_progress
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_RATIO_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+class _CatPredProgressEstimator:
+    """
+    Estimate user-facing CatPred progress from nested tqdm output.
+
+    CatPred prints nested tqdm bars (models × batches). Users should see
+    progress in final predictions, so this estimator maps nested loops to
+    [0..expected_predictions].
+    """
+
+    def __init__(self, expected_predictions: int):
+        self.expected_predictions = max(int(expected_predictions), 0)
+        self.model_total: int | None = None
+        self.model_done_hint = 0
+        self.inferred_completed_models = 0
+        self.batch_total: int | None = None
+        self.batch_done = 0
+        self._last_batch_total: int | None = None
+        self._last_batch_done = 0
+        self._last_emitted_done = 0
+
+    def _update_inner_batch(self, done: int, total: int) -> None:
+        # If inner tqdm resets from near-complete to a lower value, one model pass finished.
+        if (
+            self._last_batch_total == total
+            and done < self._last_batch_done
+            and self._last_batch_done >= max(1, int(total * 0.95))
+        ):
+            self.inferred_completed_models += 1
+
+        self.batch_total = total
+        self.batch_done = done
+        self._last_batch_total = total
+        self._last_batch_done = done
+
+    def _estimate_done(self) -> int | None:
+        if self.expected_predictions <= 0:
+            return None
+        if not self.model_total or self.model_total <= 0:
+            return None
+
+        completed_models = max(self.inferred_completed_models, self.model_done_hint)
+        if completed_models >= self.model_total:
+            model_progress = float(self.model_total)
+        else:
+            batch_frac = 0.0
+            if self.batch_total and self.batch_total > 0:
+                batch_frac = max(0.0, min(1.0, self.batch_done / self.batch_total))
+            model_progress = min(float(self.model_total), float(completed_models) + batch_frac)
+
+        frac = model_progress / float(self.model_total)
+        est_done = int(round(frac * self.expected_predictions))
+        return max(0, min(self.expected_predictions, est_done))
+
+    def ingest_line(self, line: str) -> int | None:
+        cleaned = _strip_ansi(line)
+        ratios = [(int(a), int(b)) for a, b in _RATIO_RE.findall(cleaned)]
+        if not ratios:
+            return None
+
+        for done, total in ratios:
+            if total <= 0 or done < 0 or done > total:
+                continue
+
+            # Outer model-loop tqdm is small (typically 10/10).
+            if total <= 20:
+                self.model_total = total
+                self.model_done_hint = max(self.model_done_hint, done)
+                self.inferred_completed_models = max(self.inferred_completed_models, done)
+                continue
+
+            # Inner batch-loop tqdm (e.g. 102/138).
+            self._update_inner_batch(done, total)
+
+        est_done = self._estimate_done()
+        if est_done is None or est_done <= self._last_emitted_done:
+            return None
+
+        self._last_emitted_done = est_done
+        return est_done
 
 
 def run_prediction_subprocess(
@@ -63,6 +153,49 @@ def run_prediction_subprocess(
         )
 
     process = None
+    last_done_reported = -1
+    last_total_reported: int | None = None
+    catpred_estimator = (
+        _CatPredProgressEstimator(expected_predictions=len(valid_sequences or []))
+        if str(label).strip().lower() == "catpred"
+        else None
+    )
+
+    def _report_prediction_progress(done_i: int, total_i: int | None = None) -> None:
+        nonlocal last_done_reported, last_total_reported
+
+        done_i = max(0, int(done_i))
+        if total_i is not None:
+            total_i = max(0, int(total_i))
+            done_i = min(done_i, total_i)
+
+        if total_i is None:
+            total_i = last_total_reported
+
+        # Avoid duplicate/no-op DB writes.
+        if total_i == last_total_reported and done_i <= last_done_reported:
+            return
+
+        if method_key and target:
+            set_stage_prediction_progress(
+                job_public_id=job.public_id,
+                target=target,
+                method_key=method_key,
+                done=done_i,
+                total=total_i,
+            )
+        else:
+            job.predictions_made = done_i
+            if total_i is not None:
+                job.total_predictions = total_i
+                job.save(update_fields=["predictions_made", "total_predictions"])
+            else:
+                job.save(update_fields=["predictions_made"])
+
+        last_done_reported = done_i
+        if total_i is not None:
+            last_total_reported = total_i
+
     try:
         process = subprocess.Popen(
             command,
@@ -86,11 +219,21 @@ def run_prediction_subprocess(
                     if len(parts) >= 2:
                         try:
                             done, total = parts[1].split("/")
-                            job.predictions_made = int(done)
-                            job.total_predictions = int(total)
-                            job.save(update_fields=["predictions_made", "total_predictions"])
+                            _report_prediction_progress(int(done), int(total))
                         except (ValueError, AttributeError):
                             pass  # malformed progress line — ignore
+                    continue
+
+                # CatPred prints tqdm bars instead of "Progress: x/y" during inference.
+                # Estimate prediction progress from those bars so the frontend does not
+                # stay flat and then jump to 100% at the end.
+                if catpred_estimator is not None:
+                    estimated_done = catpred_estimator.ingest_line(line)
+                    if estimated_done is not None:
+                        _report_prediction_progress(
+                            estimated_done,
+                            catpred_estimator.expected_predictions,
+                        )
 
         process.wait()
 

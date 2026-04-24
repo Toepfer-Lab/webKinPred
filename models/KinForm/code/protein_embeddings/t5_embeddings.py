@@ -29,6 +29,9 @@ import json
 import os
 import pickle
 import re
+import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
@@ -37,6 +40,12 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 from transformers import T5EncoderModel, T5Tokenizer
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from tools.gpu_embed_service.kinform_stream_ipc import StreamClient
 
 PROTT5XL_MODEL_PATH = "Rostlab/prot_t5_xl_uniref50"
 if os.environ.get("KINFORM_T5_MODEL_PATH"):
@@ -83,6 +92,29 @@ def _cleanup_residue_files(residue_dir: Path, keys: List[str]) -> None:
         print(f"Removed {removed} residue embedding file(s) from {residue_dir}")
 
 
+def _save_array_atomic(path: Path, arr: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=".npy", dir=str(path.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        np.save(tmp_path, arr)
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
+def _require_cuda_if_requested(context: str) -> None:
+    raw = str(os.environ.get("KINFORM_REQUIRE_CUDA", "")).strip().lower()
+    require_cuda = raw in {"1", "true", "yes", "on"}
+    if require_cuda and not torch.cuda.is_available():
+        raise RuntimeError(
+            f"CUDA is required for {context} (KINFORM_REQUIRE_CUDA=1), "
+            "but no CUDA device is available."
+        )
+
+
 # --------------------------------------------------------------------------- #
 #                              EMBEDDING BACK-END                             #
 # --------------------------------------------------------------------------- #
@@ -98,6 +130,8 @@ def get_prot_t5_embeddings(
     weights_df: Optional[pd.DataFrame] = None,
     weights_key_col: str = "PDB",
     weights_col: str = "Pred_BS_Scores"):
+
+    _require_cuda_if_requested("ProtT5 embedding")
 
     # ----------------------- sanity checks -------------------------------- #
     # Parse setting - can be combination like "mean+weighted"
@@ -214,7 +248,7 @@ def get_prot_t5_embeddings(
     # ─────────────────────────────────────────────────────────────────────── #
 
     # --------------------------- model load ------------------------------- #
-    print("Loading ProtT5-XL UniRef50 ...")
+    print(f"Loading ProtT5-XL UniRef50 from {PROTT5XL_MODEL_PATH} ...")
     local_only = bool(os.environ.get("KINFORM_MEDIA_PATH"))
     tokenizer = T5Tokenizer.from_pretrained(
         PROTT5XL_MODEL_PATH,
@@ -253,7 +287,7 @@ def get_prot_t5_embeddings(
             add_special_tokens=True,
         ).to(device)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = model(**token_data)
         hidden_states: Tuple[torch.Tensor, ...] = outputs.hidden_states  # len=25, 0=embeddings
 
@@ -344,6 +378,7 @@ def _get_prot_t5_residue_multi_layer(
     for each L, but uses a single model load and a single forward pass per
     batch instead of one model load per layer.
     """
+    _require_cuda_if_requested("ProtT5 multi-layer residue embedding")
     precomputed_root = Path(os.environ.get("KINFORM_MEDIA_PATH")) / "sequence_info"
     assert all(k in id_to_seq and id_to_seq[k] == v for k, v in seq_dict.items()), (
         "Sequence mismatch between provided seq_dict and id_to_seq"
@@ -371,7 +406,7 @@ def _get_prot_t5_residue_multi_layer(
         return
 
     # ── single model load ──────────────────────────────────────────────────
-    print("Loading ProtT5-XL UniRef50 ...")
+    print(f"Loading ProtT5-XL UniRef50 from {PROTT5XL_MODEL_PATH}...")
     local_only = bool(os.environ.get("KINFORM_MEDIA_PATH"))
     tokenizer = T5Tokenizer.from_pretrained(
         PROTT5XL_MODEL_PATH,
@@ -400,7 +435,7 @@ def _get_prot_t5_residue_multi_layer(
             batch_strs, return_tensors="pt", padding=True, add_special_tokens=True,
         ).to(device)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = model(**token_data)
         hidden_states: Tuple[torch.Tensor, ...] = outputs.hidden_states  # len=25
 
@@ -420,6 +455,212 @@ def _get_prot_t5_residue_multi_layer(
 
     del model, tokenizer
     gc.collect()
+
+
+class _BackgroundWriter:
+    """Drains (path, arr) write jobs on a background thread so inference never blocks on SSHFS."""
+
+    def __init__(self) -> None:
+        import queue as _q
+        import threading as _t
+        self._q: _q.Queue = _q.Queue()
+        self._exc: Optional[BaseException] = None
+        self._thread = _t.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            item = self._q.get()
+            if item is None:
+                return
+            path, arr = item
+            try:
+                _save_array_atomic(path, arr)
+            except Exception as exc:
+                self._exc = exc
+
+    def submit(self, path: Path, arr: np.ndarray) -> None:
+        self._q.put((path, arr.copy()))
+
+    def join(self) -> None:
+        self._q.put(None)
+        self._thread.join()
+        if self._exc is not None:
+            raise self._exc
+
+
+def _stream_prot_t5_residue_mean_multi_layer(
+    seq_dict: Dict[str, str],
+    *,
+    layers: List,
+    batch_size: int,
+    id_to_seq: Dict[str, str],
+    stream_socket: str,
+    stream_job_id: str,
+    worker_name: str,
+    legacy_residue_write: bool = False,
+) -> None:
+    _require_cuda_if_requested("ProtT5 stream embedding")
+    stage_name = "prot_t5_residue"
+    stage_started_at = time.monotonic()
+    precomputed_root = Path(os.environ.get("KINFORM_MEDIA_PATH")) / "sequence_info"
+    assert all(k in id_to_seq and id_to_seq[k] == v for k, v in seq_dict.items()), (
+        "Sequence mismatch between provided seq_dict and id_to_seq"
+    )
+    write_mean_files = str(os.environ.get("KINFORM_STREAM_WRITE_MEAN_FILES", "1")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    layer_mean_dirs: Dict = {}
+    layer_residue_dirs: Dict = {}
+    layer_root_names: Dict = {}
+    for layer in layers:
+        if layer is None:
+            root_name = "prot_t5_last"
+        else:
+            root_name = f"prot_t5_layer_{layer}"
+        layer_root_names[layer] = root_name
+        if write_mean_files:
+            mean_dir = precomputed_root / root_name / "mean_vecs"
+            mean_dir.mkdir(parents=True, exist_ok=True)
+            layer_mean_dirs[layer] = mean_dir
+        if legacy_residue_write:
+            residue_dir = precomputed_root / root_name / "residue_vecs"
+            residue_dir.mkdir(parents=True, exist_ok=True)
+            layer_residue_dirs[layer] = residue_dir
+
+    keys = list(seq_dict.keys())
+    if not keys:
+        return
+    layers_per_sequence = len(layers)
+    total_items = len(keys) * layers_per_sequence
+    show_progress = str(os.environ.get("KINFORM_STREAM_TQDM", "")).strip().lower() in {"1", "true", "yes", "on"}
+    emitted_items = 0
+    last_progress_at = stage_started_at
+    progress_interval_seconds = 10.0
+
+    stream = StreamClient(stream_socket)
+    bg_writer = _BackgroundWriter() if (write_mean_files or legacy_residue_write) else None
+    try:
+        model_load_started_at = time.monotonic()
+        print(f"Loading ProtT5-XL UniRef50 from {PROTT5XL_MODEL_PATH}...")
+        local_only = bool(os.environ.get("KINFORM_MEDIA_PATH"))
+        tokenizer = T5Tokenizer.from_pretrained(
+            PROTT5XL_MODEL_PATH,
+            do_lower_case=False,
+            local_files_only=local_only,
+        )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        dtype = torch.float16 if device.type == "cuda" else torch.float32
+        model = T5EncoderModel.from_pretrained(
+            PROTT5XL_MODEL_PATH,
+            dtype=dtype,
+            low_cpu_mem_usage=True,
+            output_hidden_states=True,
+            local_files_only=local_only,
+        )
+        model.eval()
+        model = model.to(device)
+        print(f"Using device: {device}")
+        print(f"Model parameters: {sum(p.numel() for p in model.parameters()) // 1e6:,} M")
+        model_load_elapsed_s = max(0.0, time.monotonic() - model_load_started_at)
+        print(
+            f"KINFORM_TIMING stage={stage_name} model_load_s={model_load_elapsed_s:.3f} "
+            f"seq_count={len(keys)} layer_count={layers_per_sequence}"
+        )
+
+        batches = [keys[i:i + batch_size] for i in range(0, len(keys), batch_size)]
+        for batch_keys in tqdm(
+            batches,
+            desc="ProtT5 stream batches",
+            disable=not show_progress,
+        ):
+            batch_seqs = [seq_dict[k] for k in batch_keys]
+            batch_strs = [" ".join(list(re.sub(r"[UZOB]", "X", s))) for s in batch_seqs]
+            token_data = tokenizer(
+                batch_strs, return_tensors="pt", padding=True, add_special_tokens=True
+            ).to(device)
+            with torch.inference_mode():
+                outputs = model(**token_data)
+            hidden_states: Tuple[torch.Tensor, ...] = outputs.hidden_states
+            seq_lens = (token_data["attention_mask"] == 1).sum(dim=1) - 1
+
+            for idx, key in enumerate(batch_keys):
+                L = seq_lens[idx].item()
+                sequence = seq_dict[key]
+                for layer in layers:
+                    layer_tensor = hidden_states[-1] if layer is None else hidden_states[layer + 1]
+                    residue_emb = layer_tensor[idx, :L].float().cpu().numpy().astype(np.float32, copy=False)
+                    if write_mean_files:
+                        mean_vec = residue_emb.mean(axis=0).astype(np.float32, copy=False)
+                        assert bg_writer is not None
+                        bg_writer.submit(layer_mean_dirs[layer] / f"{key}.npy", mean_vec)
+
+                    if legacy_residue_write:
+                        assert bg_writer is not None
+                        bg_writer.submit(layer_residue_dirs[layer] / f"{key}.npy", residue_emb)
+
+                    header = {
+                        "type": "RESIDUE_READY",
+                        "worker": worker_name,
+                        "job_id": stream_job_id,
+                        "family": "t5",
+                        "root": layer_root_names[layer],
+                        "seq_id": key,
+                        "sequence": sequence,
+                        "dtype": "float32",
+                        "shape": [int(x) for x in residue_emb.shape],
+                    }
+                    stream.send(header, residue_emb.tobytes(order="C"))
+                    emitted_items += 1
+
+            del token_data, outputs, hidden_states
+
+            now = time.monotonic()
+            if now - last_progress_at >= progress_interval_seconds:
+                elapsed_s = max(0.0, now - stage_started_at)
+                rate = (emitted_items / elapsed_s) if elapsed_s > 0 else 0.0
+                print(
+                    f"KINFORM_TIMING stage={stage_name} progress items={emitted_items}/{total_items} "
+                    f"elapsed_s={elapsed_s:.3f} rate_items_per_s={rate:.3f}"
+                )
+                last_progress_at = now
+
+        if bg_writer is not None:
+            bg_writer.join()
+        stream.send(
+            {
+                "type": "WORKER_DONE",
+                "worker": worker_name,
+                "job_id": stream_job_id,
+            },
+            b"",
+        )
+        total_elapsed_s = max(0.0, time.monotonic() - stage_started_at)
+        rate = (emitted_items / total_elapsed_s) if total_elapsed_s > 0 else 0.0
+        print(
+            f"KINFORM_TIMING stage={stage_name} summary items={emitted_items}/{total_items} "
+            f"elapsed_s={total_elapsed_s:.3f} rate_items_per_s={rate:.3f}"
+        )
+    except Exception as exc:
+        try:
+            stream.send(
+                {
+                    "type": "WORKER_ERROR",
+                    "worker": worker_name,
+                    "job_id": stream_job_id,
+                    "message": str(exc),
+                },
+                b"",
+            )
+        except Exception:
+            pass
+        raise
+    finally:
+        stream.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -570,6 +811,34 @@ Examples:
         default=None,
         help='Path to pickle file with sequence_id to sequence mapping. If not provided, uses default path.'
     )
+    parser.add_argument(
+        '--stream-mode',
+        action='store_true',
+        help='Emit residue embeddings to orchestrator stream instead of relying on residue files.'
+    )
+    parser.add_argument(
+        '--stream-socket',
+        type=str,
+        default='',
+        help='Unix socket path used for stream mode IPC.'
+    )
+    parser.add_argument(
+        '--stream-job-id',
+        type=str,
+        default='',
+        help='Optional job ID attached to stream events.'
+    )
+    parser.add_argument(
+        '--worker-name',
+        type=str,
+        default='t5',
+        help='Worker name attached to stream events.'
+    )
+    parser.add_argument(
+        '--legacy-residue-write',
+        action='store_true',
+        help='In stream mode, also write residue files to disk for compatibility/fallback.'
+    )
     
     args = parser.parse_args()
     
@@ -613,8 +882,39 @@ Examples:
         weights_df = pd.read_csv(args.weights_file, sep='\t')
         print(f"Loaded weights for {len(weights_df)} sequences")
     
-    # Determine layers to process
-    if args.all_layers:
+    # Parse layers (used by both regular and stream mode)
+    if args.layers:
+        layers = []
+        for l in args.layers:
+            if l.lower() == 'none':
+                layers.append(None)
+            else:
+                layers.append(int(l))
+    else:
+        layers = [19, None]
+
+    if args.stream_mode:
+        if args.all_layers:
+            parser.error("--all_layers is not supported in --stream-mode")
+        if settings_requested != {"residue", "mean"}:
+            parser.error("--stream-mode currently supports only --setting residue+mean")
+        if not args.stream_socket:
+            parser.error("--stream-socket is required in --stream-mode")
+        print(f"\n{'='*70}")
+        print(f"Streaming ProtT5 residue+mean embeddings for layers: {layers}")
+        print(f"{'='*70}")
+        _stream_prot_t5_residue_mean_multi_layer(
+            seq_dict,
+            layers=layers,
+            batch_size=args.batch_size,
+            id_to_seq=id_to_seq,
+            stream_socket=args.stream_socket,
+            stream_job_id=args.stream_job_id,
+            worker_name=args.worker_name,
+            legacy_residue_write=args.legacy_residue_write,
+        )
+        print(f"✓ Completed ProtT5 stream extraction for layers: {layers}")
+    elif args.all_layers:
         # Extract all layers mode
         print(f"\n{'='*70}")
         print(f"Extracting ProtT5 embeddings for all 24 layers")
@@ -635,19 +935,6 @@ Examples:
         
         print(f"✓ Completed ProtT5 all-layers embedding extraction")
     else:
-        # Process specific layers
-        if args.layers:
-            # Parse layers - convert "None" string to None, integers to int
-            layers = []
-            for l in args.layers:
-                if l.lower() == 'none':
-                    layers.append(None)
-                else:
-                    layers.append(int(l))
-        else:
-            # Default layers
-            layers = [19, None]
-        
         # When extracting residue embeddings for multiple layers, use a single
         # T5 forward pass for all layers instead of one load per layer.
         if settings_requested == {"residue"} and len(layers) > 1:

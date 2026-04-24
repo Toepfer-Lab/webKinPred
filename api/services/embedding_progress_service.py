@@ -28,10 +28,12 @@ from typing import Iterable
 from api.services.embedding_plan_service import (
     expected_paths_by_seq as planner_expected_paths_by_seq,
     method_env_keys as planner_method_env_keys,
+    missing_paths_by_seq_from_snapshot as planner_missing_paths_by_seq_from_snapshot,
     normalise_sequences_for_method as planner_normalise_sequences_for_method,
     resolve_media_and_tools as planner_resolve_media_and_tools,
     resolve_seq_ids_via_cli as planner_resolve_seq_ids_via_cli,
 )
+from tools.gpu_embed_service.cache_io import resolve_missing_ids
 from api.services.progress_service import redis_conn
 
 _KEY_PREFIX = "job_embedding_progress:"
@@ -50,6 +52,60 @@ def _redis_key(job_public_id: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _sync_stage_embedding_progress(
+    *,
+    job_public_id: str,
+    target: str,
+    method_key: str,
+    enabled: bool,
+    state: str,
+    total: int,
+    cached_already: int,
+    need_computation: int,
+    computed: int,
+    remaining: int,
+) -> None:
+    try:
+        from api.services.job_progress_service import set_stage_embedding_progress
+
+        set_stage_embedding_progress(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            enabled=enabled,
+            state=state,
+            total=total,
+            cached_already=cached_already,
+            need_computation=need_computation,
+            computed=computed,
+            remaining=remaining,
+        )
+    except Exception:
+        # Tracking persistence must never block prediction execution.
+        return
+
+
+def _sync_stage_embedding_state(
+    *,
+    job_public_id: str,
+    target: str,
+    method_key: str,
+    state: str,
+) -> None:
+    try:
+        from api.services.job_progress_service import set_stage_embedding_state
+
+        set_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state=state,
+        )
+    except Exception:
+        # Tracking persistence must never block prediction execution.
+        return
 
 
 def clear_embedding_progress(job_public_id: str) -> None:
@@ -116,10 +172,22 @@ def start_embedding_tracking(
     """
     if not valid_sequences:
         clear_embedding_progress(job_public_id)
+        _sync_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state="not_required",
+        )
         return False
 
     if method_key == "DLKcat":
         clear_embedding_progress(job_public_id)
+        _sync_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state="not_required",
+        )
         return False
 
     try:
@@ -132,13 +200,34 @@ def start_embedding_tracking(
     except Exception as exc:  # fail-open: prediction must continue
         print(f"[embedding_progress] setup skipped for {job_public_id}/{method_key}: {exc}")
         clear_embedding_progress(job_public_id)
+        _sync_stage_embedding_state(
+            job_public_id=job_public_id,
+            target=target,
+            method_key=method_key,
+            state="error",
+        )
         return False
 
-    # Active-method-only semantics: one tracker per job.
     with _TRACKERS_LOCK:
-        previous = _TRACKERS.pop(job_public_id, None)
-        if previous is not None:
-            previous.stop(final_state="done")
+        existing = _TRACKERS.get(job_public_id)
+
+        # If the same stage is already being actively tracked (e.g. GPU precompute
+        # started a tracker and the prediction subprocess calls us again for the
+        # same method/target), reuse the running tracker rather than restarting.
+        # Restarting would call _prepare_plan() on a filesystem that already has
+        # some GPU-written files, inflating cached_already and resetting computed.
+        if (
+            existing is not None
+            and existing.method_key == method_key
+            and existing.target == target
+            and not existing._stop_event.is_set()
+        ):
+            return True
+
+        # Different stage starting, or previous tracker already stopped — replace it.
+        if existing is not None:
+            _TRACKERS.pop(job_public_id, None)
+            existing.stop(final_state="done")
 
         tracker = _EmbeddingTracker(job_public_id=job_public_id, plan=plan)
         _TRACKERS[job_public_id] = tracker
@@ -242,7 +331,7 @@ def _prepare_plan(
     if not expected:
         raise RuntimeError("No embedding cache profile for this method/target.")
 
-    missing_paths_by_seq: dict[str, set[str]] = {}
+    missing_paths_by_seq = planner_missing_paths_by_seq_from_snapshot(expected)
     path_to_seqs: dict[str, set[str]] = {}
     watch_dirs: set[Path] = set()
 
@@ -250,18 +339,16 @@ def _prepare_plan(
     need_computation = 0
 
     for seq_id, paths in expected.items():
-        missing = {p for p in paths if not Path(p).exists()}
-        if not missing:
-            cached_already += 1
-            continue
+        missing = missing_paths_by_seq.get(seq_id, set())
+        cached_already += len(paths) - len(missing)
+        need_computation += len(missing)
 
-        need_computation += 1
-        missing_paths_by_seq[seq_id] = missing
-        for path_str in missing:
-            path_to_seqs.setdefault(path_str, set()).add(seq_id)
-            watch_dirs.add(Path(path_str).parent)
+        if missing:
+            for path_str in missing:
+                path_to_seqs.setdefault(path_str, set()).add(seq_id)
+                watch_dirs.add(Path(path_str).parent)
 
-    total = len(expected)
+    total = sum(len(paths) for paths in expected.values())
 
     return _PreparedPlan(
         method_key=method_key,
@@ -370,6 +457,18 @@ class _EmbeddingTracker:
 
         payload = self._payload()
         redis_conn.set(_redis_key(self.job_public_id), json.dumps(payload), ex=_TTL_SECONDS)
+        _sync_stage_embedding_progress(
+            job_public_id=self.job_public_id,
+            target=self.target,
+            method_key=self.method_key,
+            enabled=True,
+            state=self.state,
+            total=int(self.total),
+            cached_already=int(self.cached_already),
+            need_computation=int(self.need_computation),
+            computed=int(self.computed),
+            remaining=int(self.remaining),
+        )
         self._last_payload_signature = signature
         self._last_write_monotonic = now
         self._dirty = False
@@ -395,11 +494,11 @@ class _EmbeddingTracker:
             if not missing or path_str not in missing:
                 continue
             missing.remove(path_str)
+            self.computed += 1
+            self.remaining = max(0, self.remaining - 1)
+            progressed = True
             if not missing:
                 del self._missing_paths_by_seq[seq_id]
-                self.computed += 1
-                self.remaining = max(0, self.remaining - 1)
-                progressed = True
 
         if self.remaining == 0:
             self.state = "done"
@@ -407,10 +506,29 @@ class _EmbeddingTracker:
         return progressed
 
     def _reconcile_pending(self) -> None:
-        progressed = False
-        # iterate over a copy because _mark_path_present mutates _path_to_seqs
+        grouped: dict[tuple[Path, str], set[str]] = {}
+        path_to_meta: dict[str, tuple[tuple[Path, str], str]] = {}
+
         for path_str in list(self._path_to_seqs.keys()):
-            if Path(path_str).exists():
+            path = Path(path_str)
+            group_key = (path.parent, path.suffix)
+            seq_id = path.stem
+            grouped.setdefault(group_key, set()).add(seq_id)
+            path_to_meta[path_str] = (group_key, seq_id)
+
+        ready_by_group: dict[tuple[Path, str], set[str]] = {}
+        for group_key, seq_ids in grouped.items():
+            cache_dir, suffix = group_key
+            _missing, ready = resolve_missing_ids(
+                seq_ids,
+                cache_dir=cache_dir,
+                suffix=suffix,
+            )
+            ready_by_group[group_key] = ready
+
+        progressed = False
+        for path_str, (group_key, seq_id) in path_to_meta.items():
+            if seq_id in ready_by_group.get(group_key, set()):
                 progressed = self._mark_path_present(path_str) or progressed
         if progressed:
             self._write_snapshot(force=False)
@@ -576,8 +694,7 @@ def _consume_inotify_events(
                 # Directory events are handled by periodic reconciliation.
                 continue
 
-            if mask & (_IN_CLOSE_WRITE | _IN_MOVED_TO | _IN_CREATE):
-                if event_path.exists():
-                    progressed = on_file(str(event_path)) or progressed
+            if mask & (_IN_CLOSE_WRITE | _IN_MOVED_TO):
+                progressed = on_file(str(event_path)) or progressed
 
     return progressed

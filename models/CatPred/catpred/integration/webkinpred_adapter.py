@@ -15,13 +15,32 @@ import pandas as pd
 import torch
 
 _THIS_FILE = Path(__file__).resolve()
-_REPO_ROOT = _THIS_FILE.parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_CATPRED_ROOT = _THIS_FILE.parents[2]
+
+
+def _discover_repo_root(start: Path) -> Path:
+    for candidate in [start] + list(start.parents):
+        if (candidate / "tools" / "gpu_embed_service" / "cache_io.py").exists():
+            return candidate
+    # Fallback for expected source layout.
+    return _THIS_FILE.parents[4]
+
+
+_REPO_ROOT = _discover_repo_root(_THIS_FILE.parent)
+_REPO_ROOT_STR = str(_REPO_ROOT)
+_CATPRED_ROOT_STR = str(_CATPRED_ROOT)
+for path_str in (_CATPRED_ROOT_STR, _REPO_ROOT_STR):
+    if path_str in sys.path:
+        sys.path.remove(path_str)
+# Keep repo root first (for `tools.*` imports), catpred root second.
+sys.path.insert(0, _CATPRED_ROOT_STR)
+sys.path.insert(0, _REPO_ROOT_STR)
 
 from catpred.inference import PredictionRequest, run_prediction_pipeline
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
 
 _VALID_AAS = set("ACDEFGHIKLMNPQRSTVWY")
+_POOL_BATCH = 50  # sequences processed per sub-batch inside each loaded checkpoint model
 _TARGET_TO_PARAMETER = {
     "kcat": "kcat",
     "Km": "km",
@@ -34,7 +53,6 @@ _PREDICTION_COLUMN = {
     "km": "Prediction_(mM)",
     "ki": "Prediction_(mM)",
 }
-_INFERENCE_PROGRESS_CHUNK_SIZE = 50
 _AA_TO_INDEX = {
     "A": 0,
     "R": 1,
@@ -228,7 +246,19 @@ def _prepare_seq_pooled_cache(
 
     cache_paths: dict[str, dict[str, Path]] = {}
     missing_by_model: dict[str, list[str]] = {}
-    any_missing = False
+    cache_dir_by_model: dict[str, Path] = {
+        model_key: (cache_root / parameter / model_key).resolve()
+        for model_key, _ in checkpoint_models
+    }
+    for model_key, _ in checkpoint_models:
+        missing_ids, _ready_ids = resolve_missing_ids(
+            seq_ids,
+            cache_dir=cache_dir_by_model[model_key],
+            suffix=".pt",
+        )
+        if missing_ids:
+            missing_by_model[model_key] = missing_ids
+
     for seq_id in seq_ids:
         seq_cache_paths: dict[str, Path] = {}
         for model_key, _ in checkpoint_models:
@@ -239,12 +269,9 @@ def _prepare_seq_pooled_cache(
                 seq_id=seq_id,
             )
             seq_cache_paths[model_key] = path
-            if not path.exists():
-                any_missing = True
-                missing_by_model.setdefault(model_key, []).append(seq_id)
         cache_paths[seq_id] = seq_cache_paths
 
-    if not any_missing:
+    if not any(missing_by_model.values()):
         return cache_paths
 
     os.environ.setdefault("PROTEIN_EMBED_USE_CPU", "1")
@@ -256,24 +283,37 @@ def _prepare_seq_pooled_cache(
     for seq_id in missing_seq_ids:
         esm_by_seq_id[seq_id] = get_single_esm_repr(sequence_by_id[seq_id]).cpu()
 
-    for model_key, checkpoint_path in checkpoint_models:
-        pending_seq_ids = sorted(set(missing_by_model.get(model_key, [])))
-        if not pending_seq_ids:
-            continue
+    async_workers = max(1, int(os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "8")))
+    spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+    spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+    with SpoolAsyncCommitter(
+        max_workers=async_workers,
+        spool_dir=spool_dir,
+        spool_fallback_dir=spool_fallback,
+    ) as committer:
+        for model_key, checkpoint_path in checkpoint_models:
+            pending_seq_ids = sorted(set(missing_by_model.get(model_key, [])))
+            if not pending_seq_ids:
+                continue
 
-        model = load_checkpoint(str(checkpoint_path), device=torch.device("cpu"))
-        model.eval()
-        with torch.no_grad():
-            for seq_id in pending_seq_ids:
-                output_path = cache_paths[seq_id][model_key]
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                pooled = _compute_seq_pooled_output(
-                    model=model,
-                    sequence=sequence_by_id[seq_id],
-                    seq_id=seq_id,
-                    esm_feature=esm_by_seq_id[seq_id],
-                )
-                torch.save(pooled, output_path)
+            model = load_checkpoint(str(checkpoint_path), device=torch.device("cpu"))
+            model.eval()
+            model_cache_dir = cache_dir_by_model[model_key]
+            for batch_start in range(0, len(pending_seq_ids), _POOL_BATCH):
+                batch = pending_seq_ids[batch_start : batch_start + _POOL_BATCH]
+                with torch.no_grad():
+                    for seq_id in batch:
+                        pooled = _compute_seq_pooled_output(
+                            model=model,
+                            sequence=sequence_by_id[seq_id],
+                            seq_id=seq_id,
+                            esm_feature=esm_by_seq_id[seq_id],
+                        )
+                        committer.submit_torch_tensor(
+                            cache_dir=model_cache_dir,
+                            seq_id=seq_id,
+                            tensor=pooled,
+                        )
 
     return cache_paths
 
@@ -435,25 +475,17 @@ def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
         media_path=media_path,
     )
 
-    valid_predictions: list[float] = []
-    total = len(rows)
-    base_done = len(invalid_indices)
-    processed_valid = 0
-    for start in range(0, len(valid_rows), _INFERENCE_PROGRESS_CHUNK_SIZE):
-        chunk_rows = valid_rows[start : start + _INFERENCE_PROGRESS_CHUNK_SIZE]
-        chunk_seq_ids = seq_ids[start : start + _INFERENCE_PROGRESS_CHUNK_SIZE]
-        chunk_preds = _predict_rows_chunk(
-            rows=chunk_rows,
-            seq_ids=chunk_seq_ids,
-            parameter=parameter,
-            repo_root=repo_root,
-            media_path=media_path,
-            checkpoint_root=checkpoint_root,
-        )
-        valid_predictions.extend(chunk_preds)
-        processed_valid += len(chunk_rows)
-        done = min(total, base_done + processed_valid)
-        print(f"Progress: {done}/{total}", flush=True)
+    # Run all rows in a single prediction call so checkpoint models are loaded
+    # only once (10 models × 1 call) rather than once per chunk (10 × N/chunk).
+    valid_predictions: list[float] = _predict_rows_chunk(
+        rows=valid_rows,
+        seq_ids=seq_ids,
+        parameter=parameter,
+        repo_root=repo_root,
+        media_path=media_path,
+        checkpoint_root=checkpoint_root,
+    )
+    print(f"Progress: {len(rows)}/{len(rows)}", flush=True)
 
     if len(valid_predictions) != len(valid_rows):
         raise RuntimeError(
@@ -462,7 +494,7 @@ def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     valid_iter = iter(valid_predictions)
     invalid_set = set(invalid_indices)
-    for idx in range(total):
+    for idx in range(len(rows)):
         if idx in invalid_set:
             continue
         predictions[idx] = float(next(valid_iter))

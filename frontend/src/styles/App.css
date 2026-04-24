@@ -50,6 +50,14 @@
   overflow-y: auto; /* Enable vertical scrolling if content overflows */
 }
 
+.app-container--track {
+  background: transparent;
+}
+
+.main-content--track {
+  background: transparent;
+}
+
 .modal-content {
   background-color: rgba(15, 12, 41, 0.85) !important; /* make it more solid */
   backdrop-filter: blur(50px);

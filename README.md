@@ -273,6 +273,9 @@ contains `histogram_max`, `histogram_mean` (10-bin arrays, 0–100% identity),
 
 ### CSV Format
 
+Supported input schemas are `single`, `multi`, and `full reaction`.
+In practice, `full reaction` is represented with `Substrates` and `Products` columns.
+
 | Method | Predicts | Required columns | Max sequence length |
 | ------ | -------- | ---------------- | ------------------- |
 | DLKcat | kcat | `Protein Sequence`, `Substrate` | No limit |
@@ -284,7 +287,7 @@ contains `histogram_max`, `histogram_mean` (10-bin arrays, 0–100% identity),
 | KinForm-L | kcat only | `Protein Sequence`, `Substrate` | 1,500 residues |
 | CatPred | kcat or Km | `Protein Sequence`, `Substrate` | 2,048 residues |
 
-Substrates must be SMILES or InChI strings. For multi-substrate/product models, separate multiple
+Substrates must be SMILES or InChI strings. For multi or full reaction models, separate multiple
 substrates/products with semicolons: `CC(=O)O;C1CCCCC1`.
 
 ---

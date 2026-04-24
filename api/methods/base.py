@@ -22,6 +22,10 @@ The CSV input format expected by a method.
 - "single": requires a single "Substrate" column (one SMILES/InChI per row).
 - "multi":  requires "Substrates" and "Products" columns
             (semicolon-separated SMILES/InChI per row).
+
+User-facing terminology also includes "full reaction".
+In backend descriptors and validation logic, "full reaction" is represented by
+"multi" with both "Substrates" and "Products" columns.
 """
 
 
@@ -152,6 +156,7 @@ class MethodDescriptor:
     input_format : InputFormat
         CSV format expected by the method: ``"single"`` (one substrate per
         row) or ``"multi"`` (semicolon-separated substrates and products).
+        In user-facing text, ``"full reaction"`` maps to ``"multi"``.
 
     output_cols : dict[str, str]
         Maps each supported prediction target to the output CSV column name.

@@ -19,6 +19,11 @@ from api.prediction_engines.runtime_paths import (
     PREDICTION_SCRIPTS,
     PYTHON_PATHS,
 )
+from api.services.job_progress_service import (
+    increment_stage_validation,
+    reset_stage_prediction_metrics,
+    set_stage_prediction_total,
+)
 from api.utils.convert_to_mol import convert_to_mol, substrate_as_smiles
 from webKinPred.settings import MEDIA_ROOT
 
@@ -60,12 +65,11 @@ def dlkcat_predictions(
     print("Running DLKcat model...")
 
     job = Job.objects.get(public_id=public_id)
-    job.molecules_processed = 0
-    job.invalid_rows = 0
-    job.predictions_made = 0
-    job.total_molecules = len(sequences)
-    job.save(
-        update_fields=["molecules_processed", "invalid_rows", "predictions_made", "total_molecules"]
+    reset_stage_prediction_metrics(
+        job_public_id=public_id,
+        target="kcat",
+        method_key="DLKcat",
+        total_rows=len(sequences),
     )
 
     python_path = PYTHON_PATHS.get("DLKcat", "")
@@ -88,7 +92,6 @@ def dlkcat_predictions(
 
     # ── Validate inputs molecule by molecule ──────────────────────────────────
     for idx, (seq, substrate) in enumerate(zip(sequences, substrates)):
-        job.molecules_processed += 1
         seq_valid = all(c in _AMINO_ACIDS for c in seq)
         mol = convert_to_mol(substrate) if seq_valid else None
 
@@ -114,16 +117,31 @@ def dlkcat_predictions(
                 valid_smiles.append(smiles)
                 valid_sequences.append(seq)
                 valid_indices.append(idx)
-                job.save(update_fields=["molecules_processed", "invalid_rows"])
+                increment_stage_validation(
+                    job_public_id=public_id,
+                    target="kcat",
+                    method_key="DLKcat",
+                    processed_inc=1,
+                    invalid_inc=0,
+                )
                 continue
 
         print(f"  Row {idx + 1}: {reason}")
         invalid_reasons[idx] = reason
-        job.invalid_rows += 1
-        job.save(update_fields=["molecules_processed", "invalid_rows"])
+        increment_stage_validation(
+            job_public_id=public_id,
+            target="kcat",
+            method_key="DLKcat",
+            processed_inc=1,
+            invalid_inc=1,
+        )
 
-    job.total_predictions = len(valid_indices)
-    job.save(update_fields=["total_predictions"])
+    set_stage_prediction_total(
+        job_public_id=public_id,
+        target="kcat",
+        method_key="DLKcat",
+        total_predictions=len(valid_indices),
+    )
 
     if not valid_indices:
         return predictions, invalid_reasons

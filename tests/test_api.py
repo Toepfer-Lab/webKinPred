@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import io
 import json
 import math
@@ -30,6 +31,11 @@ DEFAULT_KEY = "ak_17f90e7c1f6ac3f5fc861d8cec4667a2b888c358a333bb81f75b631a9b5006
 # ---------------------------------------------------------------------------
 # Known method IDs (normalised to lowercase for comparison)
 # ---------------------------------------------------------------------------
+
+# GPU-offload-capable methods (subset of the above)
+GPU_SUPPORTED_KCAT_METHOD_IDS = ["KinForm-H", "KinForm-L", "UniKP", "TurNup", "CataPro"]
+GPU_SUPPORTED_KM_METHOD_IDS = ["KinForm-H", "UniKP", "CataPro"]
+GPU_SUPPORTED_KCAT_KM_METHOD_IDS = ["CataPro"]
 
 # kcat-capable methods
 KCAT_METHOD_IDS = [
@@ -210,6 +216,41 @@ def choose_submit_csv(
         if km_method == "CatPred":
             return CATPRED_DOTJOIN_SUBSTRATE_CSV
     return SINGLE_SUBSTRATE_CSV
+
+
+def _unique_protein_sequence(seed: str, length: int = 240) -> str:
+    """
+    Build a deterministic amino-acid sequence from a seed string.
+    """
+    alphabet = "ACDEFGHIKLMNPQRSTVWY"
+    state = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    out: list[str] = []
+    idx = 0
+    while len(out) < length:
+        state = hashlib.sha256(f"{state}:{idx}".encode("utf-8")).hexdigest()
+        idx += 1
+        for ch in state:
+            out.append(alphabet[int(ch, 16) % len(alphabet)])
+            if len(out) >= length:
+                break
+    return "".join(out)
+
+
+def build_gpu_uncached_csv(label: str) -> str:
+    """
+    Build a small CSV fixture with unique proteins so GPU tests exercise
+    uncached embedding work.
+    """
+    nonce = f"{label}:{time.time_ns()}"
+    seq_a = _unique_protein_sequence(f"{nonce}:a")
+    seq_b = _unique_protein_sequence(f"{nonce}:b")
+    return textwrap.dedent(
+        f"""\
+        Protein Sequence,Substrate,Substrates,Products
+        {seq_a},CC(=O)O,CC(=O)O;O,CC(O)=O;[H+]
+        {seq_b},C1CCCCC1,C1CCCCC1;O,OC1CCCCC1;[H+]
+    """
+    )
 
 
 def expected_kcat_similarity_columns(submitted: dict) -> tuple[str, str] | None:
@@ -720,6 +761,16 @@ def wait_for_terminal_status(
     return None
 
 
+def fetch_job_status(base: str, headers: dict, job_id: str, label: str) -> dict | None:
+    """
+    Fetch the latest /status payload for a job and validate HTTP status.
+    """
+    r = requests.get(f"{base}/status/{job_id}/", headers=headers)
+    if not check(f"[{label}] status fetch HTTP 200", r.status_code == 200, f"got {r.status_code}"):
+        return None
+    return r.json()
+
+
 def validate_completed_result(
     base: str,
     headers: dict,
@@ -971,6 +1022,144 @@ def test_validate_similarity(base: str, headers: dict) -> None:
         break
 
 
+def test_gpu_status(base: str) -> None:
+    """GET /api/v1/gpu/status/ — GPU embed-service health snapshot."""
+    section("GET /gpu/status/ — GPU embed-service reachability")
+    r = requests.get(f"{base}/gpu/status/")
+    check("status 200", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code != 200:
+        return
+    j = r.json()
+    check("has configured", "configured" in j)
+    check("has online", "online" in j)
+    check("has mode", "mode" in j)
+    check("mode is gpu or cpu", j.get("mode") in {"gpu", "cpu"})
+    if j.get("online"):
+        check("mode=gpu when online", j.get("mode") == "gpu")
+        print(f"         → GPU online: {j.get('gpu_name') or 'unknown'}"
+              f"  free={j.get('free_vram_gb')}GB / {j.get('total_vram_gb')}GB")
+    else:
+        print(f"         → GPU offline (reason: {j.get('reason', 'unknown')})")
+
+
+def test_gpu_methods(base: str, headers: dict, methods: set, poll_timeout: int) -> None:
+    """
+    If GPU is online, submit prediction jobs for all selected GPU-capable methods
+    and verify they complete successfully, confirming the GPU pipeline is working.
+    Skipped gracefully when GPU is offline or not configured.
+    """
+    section("GPU Pipeline — submit uncached GPU-capable methods and verify GPU execution")
+
+    r = requests.get(f"{base}/gpu/status/")
+    if r.status_code != 200:
+        print(f"  (skipping — GET /gpu/status/ returned {r.status_code})")
+        return
+    gpu_status = r.json()
+    if not gpu_status.get("configured"):
+        print("  (skipping — GPU service not configured on this server)")
+        return
+    if not gpu_status.get("online"):
+        print(f"  (skipping — GPU is offline: {gpu_status.get('reason', 'unknown')})")
+        return
+
+    print(f"  GPU online: {gpu_status.get('gpu_name') or 'unknown'}")
+
+    specs: list[dict] = []
+    for m in GPU_SUPPORTED_KCAT_METHOD_IDS:
+        if m.lower() not in methods:
+            continue
+        specs.append({
+            "prediction_type": "kcat",
+            "kcat_method": m,
+            "km_method": None,
+            "kcat_km_method": None,
+            "csv_content": build_gpu_uncached_csv(f"gpu/kcat/{m}"),
+            "label": f"gpu/kcat/{m}",
+        })
+    for m in GPU_SUPPORTED_KM_METHOD_IDS:
+        if m.lower() not in methods:
+            continue
+        specs.append({
+            "prediction_type": "Km",
+            "kcat_method": None,
+            "km_method": m,
+            "kcat_km_method": None,
+            "csv_content": build_gpu_uncached_csv(f"gpu/Km/{m}"),
+            "label": f"gpu/Km/{m}",
+        })
+    for m in GPU_SUPPORTED_KCAT_KM_METHOD_IDS:
+        if m.lower() not in methods:
+            continue
+        specs.append({
+            "prediction_type": "kcat/Km",
+            "kcat_method": None,
+            "km_method": None,
+            "kcat_km_method": m,
+            "csv_content": build_gpu_uncached_csv(f"gpu/kcat_Km/{m}"),
+            "label": f"gpu/kcat_Km/{m}",
+        })
+
+    if not specs:
+        print("  (no GPU-supported methods are selected — nothing to submit)")
+        return
+
+    submitted_gpu_jobs: list[dict] = []
+    for spec in specs:
+        label = spec["label"]
+        r = submit(
+            base, headers, spec["csv_content"], spec["prediction_type"],
+            kcat_method=spec["kcat_method"],
+            km_method=spec["km_method"],
+            kcat_km_method=spec.get("kcat_km_method"),
+        )
+        ok = check(f"[{label}] status 201", r.status_code == 201, f"got {r.status_code}")
+        if not ok:
+            continue
+        j = r.json()
+        check(f"[{label}] has jobId", "jobId" in j)
+        if "jobId" not in j:
+            continue
+        submitted_gpu_jobs.append({**spec, "job": j, "job_id": j["jobId"]})
+        print(f"         → Submitted {label}: jobId={j['jobId']}")
+
+    for submitted in submitted_gpu_jobs:
+        job_id = submitted["job_id"]
+        label = submitted["label"]
+        final_status = wait_for_terminal_status(base, headers, job_id, label, poll_timeout)
+        if final_status is None:
+            continue
+        check(
+            f"[{label}] final status is Completed",
+            final_status == "Completed",
+            f"got {final_status}",
+        )
+        if final_status == "Completed":
+            status_payload = fetch_job_status(base, headers, job_id, label)
+            if status_payload is not None:
+                gpu_precompute = status_payload.get("gpuPrecompute")
+                check(
+                    f"[{label}] status exposes gpuPrecompute",
+                    isinstance(gpu_precompute, dict),
+                )
+                if isinstance(gpu_precompute, dict):
+                    used_gpu = bool(
+                        gpu_precompute.get("usedGpu", gpu_precompute.get("used_gpu", False))
+                    )
+                    check(f"[{label}] gpuPrecompute.attempted=true", bool(gpu_precompute.get("attempted")))
+                    check(f"[{label}] gpuPrecompute.usedGpu=true", used_gpu)
+                    check(f"[{label}] gpuPrecompute.completed=true", bool(gpu_precompute.get("completed")))
+                    check(
+                        f"[{label}] gpuPrecompute.failed=false",
+                        not bool(gpu_precompute.get("failed")),
+                    )
+                    check(
+                        f"[{label}] gpuPrecompute.reason=done (uncached GPU work executed)",
+                        str(gpu_precompute.get("reason", "")).strip() == "done",
+                        f"got {gpu_precompute.get('reason')!r}",
+                    )
+            validate_completed_result(base, headers, job_id, label, submitted)
+
+
 def test_wrong_methods(base: str, headers: dict) -> None:
     """Make sure method-not-allowed cases are handled (submit must be POST)."""
     section("HTTP method errors")
@@ -1016,6 +1205,14 @@ def main():
         ),
     )
     parser.add_argument(
+        "--skip-gpu",
+        action="store_true",
+        help=(
+            "Skip the GPU pipeline tests (GET /gpu/status/ + GPU-capable method submission). "
+            "These tests are skipped automatically when GPU is offline."
+        ),
+    )
+    parser.add_argument(
         "--methods",
         default="all",
         metavar="METHOD[,METHOD…]",
@@ -1049,6 +1246,7 @@ def main():
     print(f"  API Key  : {key[:15]}…")
     print(f"  Methods  : {', '.join(sorted(methods))}")
     print(f"  Variants : {'extra' if args.extra_submit_variants else 'minimal'}")
+    print(f"  GPU tests: {'skip' if args.skip_gpu else 'auto (runs if GPU online)'}")
     print("=" * 70)
 
     # Run all test groups
@@ -1092,6 +1290,13 @@ def main():
         print("\n  (skipping similarity test — pass without --skip-similarity to run it)")
     else:
         test_validate_similarity(base, headers)
+
+    # GPU embed-service status and GPU pipeline tests
+    if args.skip_gpu:
+        print("\n  (skipping GPU tests — pass without --skip-gpu to run them)")
+    else:
+        test_gpu_status(base)
+        test_gpu_methods(base, headers, methods, poll_timeout=args.poll_timeout)
 
     # Method-not-allowed sanity check
     test_wrong_methods(base, headers)

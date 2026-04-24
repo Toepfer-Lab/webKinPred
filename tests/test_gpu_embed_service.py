@@ -90,7 +90,7 @@ class GpuEmbedServiceTests(unittest.TestCase):
         self.assertEqual(events[0], "start_tracking")
         self.assertTrue(events[1].startswith("http:POST:"))
 
-    def test_gpu_timeout_is_fail_open(self):
+    def test_gpu_failure_is_fail_open(self):
         plan = SimpleNamespace(
             need_computation=1,
             gpu_supported=True,
@@ -105,7 +105,7 @@ class GpuEmbedServiceTests(unittest.TestCase):
                     with patch.object(ges, "get_gpu_status", return_value={"online": True}):
                         with patch.object(ges, "start_embedding_tracking", return_value=True):
                             with patch.object(ges, "_http_json", return_value={"job_id": "job_1"}):
-                                with patch.object(ges, "_poll_job", return_value={"status": "timeout"}):
+                                with patch.object(ges, "_poll_job", return_value={"status": "failed"}):
                                     result = ges.run_gpu_precompute_if_available(
                                         job_public_id="job_y",
                                         method_key="TurNup",
@@ -117,7 +117,7 @@ class GpuEmbedServiceTests(unittest.TestCase):
         self.assertTrue(result.used_gpu)
         self.assertFalse(result.completed)
         self.assertTrue(result.failed)
-        self.assertEqual(result.reason, "timeout")
+        self.assertEqual(result.reason, "failed")
 
     def test_gpu_status_cache_and_unconfigured(self):
         with patch.object(ges, "_base_url", return_value=""):
