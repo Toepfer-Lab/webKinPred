@@ -32,6 +32,12 @@ from torch_geometric.data import Batch, Data
 from KCM import EitlemKcatPredictor
 from KMP import EitlemKmPredictor
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
+
 # ── Path resolution ────────────────────────────────────────────────────────────
 
 _MEDIA_PATH = os.environ.get("EITLEM_MEDIA_PATH", "/home/saleh/webKinPred/media")
@@ -159,11 +165,35 @@ def main() -> None:
     # CPU fallback: compute them now with ESM1v loaded once, then free the model
     # so it doesn't compete with the GNN for RAM during Phase 2.
     ESM_EMB_DIR.mkdir(parents=True, exist_ok=True)
-    for seq_id, sequence in zip(seq_ids, sequences):
-        path = _emb_path(seq_id)
-        if not path.exists():
-            rep = _compute_residue_repr(sequence)
-            np.save(str(path), rep)
+    missing_ids, _ready_ids = resolve_missing_ids(
+        seq_ids,
+        cache_dir=ESM_EMB_DIR,
+        suffix=".npy",
+    )
+    if missing_ids:
+        seq_by_id: dict[str, str] = {}
+        for seq_id, sequence in zip(seq_ids, sequences):
+            seq_by_id.setdefault(seq_id, sequence)
+        async_workers = max(
+            1,
+            int(
+                os.environ.get(
+                    "EITLEM_CACHE_ASYNC_WORKERS",
+                    os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"),
+                )
+            ),
+        )
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+        with SpoolAsyncCommitter(
+            max_workers=async_workers,
+            spool_dir=spool_dir,
+            spool_fallback_dir=spool_fallback,
+        ) as committer:
+            for seq_id in missing_ids:
+                sequence = seq_by_id[seq_id]
+                rep = _compute_residue_repr(sequence)
+                committer.submit_numpy(cache_dir=ESM_EMB_DIR, seq_id=seq_id, array=rep)
     _free_esm()
 
     # Load EITLEM prediction model only after ESM1v has been freed.

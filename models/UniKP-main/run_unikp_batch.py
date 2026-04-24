@@ -7,12 +7,19 @@ import re
 import pickle
 import gc
 import warnings
+from pathlib import Path
 from build_vocab import WordVocab
 from pretrain_trfm import TrfmSeq2seq
 from utils import split
 from transformers import T5Tokenizer, T5EncoderModel
 from transformers.utils import logging
 import subprocess
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
 
 logging.set_verbosity_error()
 warnings.filterwarnings(
@@ -117,7 +124,8 @@ def load_t5_model():
     """Load T5 model once and return components."""
     print("Loading T5 model...")
     gc.collect()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     try:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         tokenizer = T5Tokenizer.from_pretrained(
@@ -171,6 +179,7 @@ def seq_to_vec(
     device=None,
     seq_ids=None,
     batch_size=1,
+    planned_missing_ids=None,
 ):
     """Convert sequences to vectors using pre-loaded T5 model (if provided)."""
     ids = list(seq_ids) if seq_ids is not None else resolve_seq_ids_via_cli(sequences)
@@ -186,14 +195,24 @@ def seq_to_vec(
         if seq_id not in seq_id_to_example_seq:
             seq_id_to_example_seq[seq_id] = seq
 
+    cache_dir = Path(SEQ_VEC_DIR).resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
     vec_by_seq_id = {}
-    missing_seq_ids = []
-    for seq_id in seq_id_to_positions:
-        vec_path = os.path.join(SEQ_VEC_DIR, f"{seq_id}.npy")
-        if os.path.exists(vec_path):
-            vec_by_seq_id[seq_id] = np.load(vec_path)
-        else:
-            missing_seq_ids.append(seq_id)
+    if planned_missing_ids is None:
+        missing_seq_ids, ready_seq_ids = resolve_missing_ids(
+            seq_id_to_positions.keys(),
+            cache_dir=cache_dir,
+            suffix=".npy",
+        )
+    else:
+        missing_seq_ids = []
+        for seq_id in planned_missing_ids:
+            if seq_id in seq_id_to_positions and seq_id not in missing_seq_ids:
+                missing_seq_ids.append(seq_id)
+        ready_seq_ids = set(seq_id_to_positions.keys()) - set(missing_seq_ids)
+
+    for seq_id in ready_seq_ids:
+        vec_by_seq_id[seq_id] = np.load(cache_dir / f"{seq_id}.npy")
 
     if missing_seq_ids:
         if tokenizer is None or model is None or device is None:
@@ -202,36 +221,52 @@ def seq_to_vec(
             )
 
         print(f"Generating embeddings for {len(missing_seq_ids)} sequences...")
-        for start in range(0, len(missing_seq_ids), batch_size):
-            batch_ids = missing_seq_ids[start : start + batch_size]
-            spaced_batch = []
-            for sid in batch_ids:
-                spaced = " ".join(seq_id_to_example_seq[sid])
-                spaced_batch.append(re.sub(r"[UZOB]", "X", spaced))
+        async_workers = max(
+            1,
+            int(
+                os.environ.get(
+                    "UNIKP_CACHE_ASYNC_WORKERS",
+                    os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"),
+                )
+            ),
+        )
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+        with SpoolAsyncCommitter(
+            max_workers=async_workers,
+            spool_dir=spool_dir,
+            spool_fallback_dir=spool_fallback,
+        ) as committer:
+            for start in range(0, len(missing_seq_ids), batch_size):
+                batch_ids = missing_seq_ids[start : start + batch_size]
+                spaced_batch = []
+                for sid in batch_ids:
+                    spaced = " ".join(seq_id_to_example_seq[sid])
+                    spaced_batch.append(re.sub(r"[UZOB]", "X", spaced))
 
-            encoded = tokenizer.batch_encode_plus(
-                spaced_batch,
-                add_special_tokens=True,
-                padding=True,
-                return_tensors="pt",
-            )
-            input_ids = encoded["input_ids"].to(device)
-            attention_mask = encoded["attention_mask"].to(device)
+                encoded = tokenizer.batch_encode_plus(
+                    spaced_batch,
+                    add_special_tokens=True,
+                    padding=True,
+                    return_tensors="pt",
+                )
+                input_ids = encoded["input_ids"].to(device)
+                attention_mask = encoded["attention_mask"].to(device)
 
-            with torch.no_grad():
-                embedding = model(
-                    input_ids=input_ids, attention_mask=attention_mask
-                ).last_hidden_state
+                with torch.no_grad():
+                    embedding = model(
+                        input_ids=input_ids, attention_mask=attention_mask
+                    ).last_hidden_state
 
-            embedding_np = embedding.float().cpu().numpy()
-            lengths = attention_mask.sum(dim=1).cpu().numpy()
+                embedding_np = embedding.float().cpu().numpy()
+                lengths = attention_mask.sum(dim=1).cpu().numpy()
 
-            for row_idx, sid in enumerate(batch_ids):
-                seq_len = int(lengths[row_idx])
-                token_count = max(seq_len - 1, 1)
-                seq_vec = embedding_np[row_idx, :token_count].mean(axis=0)
-                np.save(os.path.join(SEQ_VEC_DIR, f"{sid}.npy"), seq_vec)
-                vec_by_seq_id[sid] = seq_vec
+                for row_idx, sid in enumerate(batch_ids):
+                    seq_len = int(lengths[row_idx])
+                    token_count = max(seq_len - 1, 1)
+                    seq_vec = embedding_np[row_idx, :token_count].mean(axis=0).astype(np.float32, copy=False)
+                    committer.submit_numpy(cache_dir=cache_dir, seq_id=sid, array=seq_vec)
+                    vec_by_seq_id[sid] = seq_vec
 
     vecs = []
     for seq_id in ids:
@@ -265,10 +300,12 @@ def main(input_path, output_path, task_type):
 
     # Check if we need T5 model (if any sequences need embedding)
     all_seq_ids = resolve_seq_ids_via_cli(sequences)
-    need_t5_model = any(
-        not os.path.exists(os.path.join(SEQ_VEC_DIR, f"{seq_id}.npy"))
-        for seq_id in all_seq_ids
+    planned_missing_ids, _ready_ids = resolve_missing_ids(
+        all_seq_ids,
+        cache_dir=Path(SEQ_VEC_DIR).resolve(),
+        suffix=".npy",
     )
+    need_t5_model = len(planned_missing_ids) > 0
 
     # Load T5 model once if needed
     tokenizer, t5_model, device = None, None, None
@@ -296,7 +333,8 @@ def main(input_path, output_path, task_type):
             model=t5_model,
             device=device,
             seq_ids=all_seq_ids,
-            batch_size=1,
+            batch_size=_env_int("UNIKP_T5_BATCH_SIZE", 1),
+            planned_missing_ids=planned_missing_ids,
         )
         predictions = [None] * total_predictions
 

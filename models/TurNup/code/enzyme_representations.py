@@ -14,6 +14,11 @@ _REPO_ROOT = _HERE.parents[3]
 _DEFAULT_MEDIA = _REPO_ROOT / "media"
 _DEFAULT_TOOLS = _REPO_ROOT / "tools"
 
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
+
 _media_path = Path(os.environ.get("TURNUP_MEDIA_PATH", str(_DEFAULT_MEDIA)))
 _tools_path = Path(os.environ.get("TURNUP_TOOLS_PATH", str(_DEFAULT_TOOLS)))
 
@@ -110,8 +115,6 @@ def calcualte_esm1b_ts_vectors(enzyme_list, esm_model=None, batch_converter=None
     """
     df_enzyme = preprocess_enzymes(enzyme_list)
 
-    needed_ids = []
-    sequences_to_embed = []
     df_enzyme["enzyme rep"] = pd.Series([None] * len(df_enzyme), dtype=object)
 
     # Resolve IDs in a single call (updates uses_count & last_seen_at)
@@ -119,36 +122,72 @@ def calcualte_esm1b_ts_vectors(enzyme_list, esm_model=None, batch_converter=None
     ids = resolve_seq_ids_via_cli(seqs)
     df_enzyme["ID"] = ids
 
+    cache_dir = Path(SEQ_VEC_DIR).resolve()
+    missing_ids, _ready_ids = resolve_missing_ids(
+        ids,
+        cache_dir=cache_dir,
+        suffix=".npy",
+    )
+    missing_set = set(missing_ids)
+
+    seq_id_to_row: dict[str, int] = {}
+    seq_id_to_seq: dict[str, str] = {}
     for ind in df_enzyme.index:
-        seq_id = df_enzyme.at[ind, "ID"]
-        seq = df_enzyme.at[ind, "model_input"]
-
-        vec_path = os.path.join(SEQ_VEC_DIR, f"{seq_id}.npy")
-        if os.path.exists(vec_path):
-            df_enzyme.at[ind, "enzyme rep"] = np.load(vec_path)
+        seq_id = str(df_enzyme.at[ind, "ID"]).strip()
+        seq = str(df_enzyme.at[ind, "model_input"]).strip()
+        if seq_id not in missing_set:
+            df_enzyme.at[ind, "enzyme rep"] = np.load(cache_dir / f"{seq_id}.npy")
         else:
-            sequences_to_embed.append((seq_id, seq))
-            needed_ids.append(ind)
+            seq_id_to_row[seq_id] = int(ind)
+            seq_id_to_seq[seq_id] = seq
 
-    if sequences_to_embed:
+    if seq_id_to_seq:
         # Load model if not provided (backward compatibility)
         if esm_model is None or batch_converter is None:
-            print(f"Embedding {len(sequences_to_embed)} new sequences...")
+            print(f"Embedding {len(seq_id_to_seq)} new sequences...")
             esm_model, batch_converter = load_esm1b_model()
         else:
             print(
-                f"Embedding {len(sequences_to_embed)} new sequences using pre-loaded model..."
+                f"Embedding {len(seq_id_to_seq)} new sequences using pre-loaded model..."
             )
+        batch_size_raw = str(os.environ.get("TURNUP_EMBED_BATCH_SIZE", "8")).strip()
+        try:
+            batch_size = max(1, int(batch_size_raw))
+        except ValueError:
+            batch_size = 8
+        async_workers_raw = str(
+            os.environ.get("TURNUP_CACHE_ASYNC_WORKERS", os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"))
+        ).strip()
+        try:
+            async_workers = max(1, int(async_workers_raw))
+        except ValueError:
+            async_workers = 4
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
 
-        for i, (seq_id, seq) in enumerate(sequences_to_embed):
-            if not validate_enzyme(seq):
-                continue
-            _, _, tokens = batch_converter([(seq_id, seq)])
-            with torch.no_grad():
-                results = esm_model(tokens, repr_layers=[33])
-            rep = results["representations"][33][0][0].numpy()
-            np.save(os.path.join(SEQ_VEC_DIR, f"{seq_id}.npy"), rep)
-            df_enzyme.at[needed_ids[i], "enzyme rep"] = rep
+        valid_ids = [sid for sid in seq_id_to_seq if validate_enzyme(seq_id_to_seq[sid])]
+        with SpoolAsyncCommitter(
+            max_workers=async_workers,
+            spool_dir=spool_dir,
+            spool_fallback_dir=spool_fallback,
+        ) as committer:
+            for start in range(0, len(valid_ids), batch_size):
+                batch_ids = valid_ids[start : start + batch_size]
+                data = [(sid, seq_id_to_seq[sid]) for sid in batch_ids]
+                _, _, tokens = batch_converter(data)
+                with torch.no_grad():
+                    results = esm_model(tokens, repr_layers=[33], return_contacts=False)
+                batch_reps = (
+                    results["representations"][33][:, 0, :]
+                    .detach()
+                    .cpu()
+                    .numpy()
+                    .astype(np.float32, copy=False)
+                )
+                for row_idx, seq_id in enumerate(batch_ids):
+                    rep = batch_reps[row_idx]
+                    committer.submit_numpy(cache_dir=cache_dir, seq_id=seq_id, array=rep)
+                    df_enzyme.at[seq_id_to_row[seq_id], "enzyme rep"] = rep
 
     return df_enzyme
 

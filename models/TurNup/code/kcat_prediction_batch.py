@@ -20,6 +20,11 @@ _HERE = Path(__file__).resolve()
 _REPO_ROOT = _HERE.parents[3]
 _DEFAULT_MEDIA = _REPO_ROOT / "media"
 
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from tools.gpu_embed_service.cache_io import resolve_missing_ids
+
 _media_path = Path(os.environ.get("TURNUP_MEDIA_PATH", str(_DEFAULT_MEDIA)))
 if os.environ.get("TURNUP_DATA_PATH"):
     data_dir = os.environ.get("TURNUP_DATA_PATH")
@@ -50,22 +55,14 @@ def kcat_prediction_batch(substrates, products, enzymes):
     batch_converter = None
     esm_needed = False
 
-    # Quick check: see if any sequences need embedding
-    for enzyme in enzymes:
-        enzyme_upper = enzyme.upper()
-        df_enzyme_check = preprocess_enzymes([enzyme_upper])
-        seqs = df_enzyme_check["model_input"].tolist()
-        ids = resolve_seq_ids_via_cli(seqs)
-
-        # Check if any sequences need embedding
-        for seq_id in ids:
-            vec_path = os.path.join(SEQ_VEC_DIR, f"{seq_id}.npy")
-            if not os.path.exists(vec_path):
-                esm_needed = True
-                break
-
-        if esm_needed:
-            break
+    check_df = preprocess_enzymes([str(enzyme).upper() for enzyme in enzymes])
+    check_ids = resolve_seq_ids_via_cli(check_df["model_input"].tolist())
+    missing_ids, _ready_ids = resolve_missing_ids(
+        check_ids,
+        cache_dir=Path(SEQ_VEC_DIR).resolve(),
+        suffix=".npy",
+    )
+    esm_needed = len(missing_ids) > 0
 
     # Load ESM1b model only if needed
     if esm_needed:

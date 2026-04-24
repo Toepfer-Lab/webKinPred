@@ -24,6 +24,12 @@ from rdkit.Chem import MACCSkeys
 from torch.utils.data import DataLoader, Dataset
 from transformers import T5EncoderModel, T5Tokenizer
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
+
 from act_model import ActivityModel
 from model import KcatModel, KmModel
 
@@ -154,15 +160,14 @@ def get_prott5_embeddings(
 ) -> np.ndarray:
     cache_dir.mkdir(parents=True, exist_ok=True)
     seq_ids = resolve_seq_ids_via_cli(sequences, seqmap_cli, seqmap_db)
-
-    missing_by_seq_id: dict[str, tuple[str, Path]] = {}
+    missing_ids, _ready_ids = resolve_missing_ids(seq_ids, cache_dir=cache_dir, suffix=".npy")
+    missing_set = set(missing_ids)
+    missing_by_seq_id: dict[str, str] = {}
     for seq, seq_id in zip(sequences, seq_ids):
-        fp = cache_dir / f"{seq_id}.npy"
-        if fp.exists() or seq_id in missing_by_seq_id:
+        if seq_id not in missing_set or seq_id in missing_by_seq_id:
             continue
-        # The shared ProtT5 cache is keyed by seq_id, so repeated sequences in
-        # the same request only need one embedding pass.
-        missing_by_seq_id[seq_id] = (seq, fp)
+        # Shared ProtT5 cache is keyed by seq_id; repeated sequences embed once.
+        missing_by_seq_id[seq_id] = seq
 
     tokenizer = None
     model = None
@@ -180,10 +185,25 @@ def get_prott5_embeddings(
             torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
         ).to(device)
         model.eval()
-
-        for seq, fp in missing_by_seq_id.values():
-            emb = _compute_prott5_mean_embedding(seq, tokenizer, model, device)
-            np.save(fp, emb)
+        async_workers = max(
+            1,
+            int(
+                os.environ.get(
+                    "CATAPRO_CACHE_ASYNC_WORKERS",
+                    os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"),
+                )
+            ),
+        )
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+        with SpoolAsyncCommitter(
+            max_workers=async_workers,
+            spool_dir=spool_dir,
+            spool_fallback_dir=spool_fallback,
+        ) as committer:
+            for seq_id, seq in missing_by_seq_id.items():
+                emb = _compute_prott5_mean_embedding(seq, tokenizer, model, device)
+                committer.submit_numpy(cache_dir=cache_dir, seq_id=seq_id, array=emb)
 
     out = []
     for seq_id in seq_ids:

@@ -12,10 +12,17 @@ from rdkit.Chem import MACCSkeys
 from torch_geometric.data import Data, Batch
 import subprocess
 import gc
+from pathlib import Path
 
 # Adjust the import paths according to your project structure
 from KCM import EitlemKcatPredictor
 from KMP import EitlemKmPredictor
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
 
 
 def _env_bool(name, default=True):
@@ -99,11 +106,26 @@ def load_esm_model():
     return esm_model, alphabet, batch_converter
 
 
-def get_sequence_embedding(sequence, seq_id, esm_model, batch_converter, alphabet):
+def get_sequence_embedding(
+    sequence,
+    seq_id,
+    esm_model,
+    batch_converter,
+    alphabet,
+    *,
+    cache_dir: Path,
+    missing_seq_ids: set[str],
+    committer: SpoolAsyncCommitter | None,
+    in_memory_cache: dict[str, np.ndarray],
+):
     """Get embedding for a single sequence."""
-    vec_path = os.path.join(ESM_EMB_DIR, f"{seq_id}.npy")
-    if os.path.exists(vec_path):
-        return np.load(vec_path)
+    if seq_id in in_memory_cache:
+        return in_memory_cache[seq_id]
+    vec_path = cache_dir / f"{seq_id}.npy"
+    if seq_id not in missing_seq_ids:
+        rep = np.load(vec_path).astype(np.float32, copy=False)
+        in_memory_cache[seq_id] = rep
+        return rep
 
     if esm_model is None or batch_converter is None or alphabet is None:
         raise RuntimeError(
@@ -125,14 +147,19 @@ def get_sequence_embedding(sequence, seq_id, esm_model, batch_converter, alphabe
         results = esm_model(batch_tokens, repr_layers=[33], return_contacts=False)
     token_representations = results["representations"][33]
     tokens_len = batch_lens[0]
-    rep = token_representations[0, 1 : tokens_len - 1].cpu().numpy()
-    np.save(vec_path, rep)
+    rep = token_representations[0, 1 : tokens_len - 1].cpu().numpy().astype(np.float32, copy=False)
+    if committer is None:
+        raise RuntimeError("ESM embedding committer is not available for missing sequence cache write.")
+    committer.submit_numpy(cache_dir=cache_dir, seq_id=seq_id, array=rep)
+    missing_seq_ids.discard(seq_id)
+    in_memory_cache[seq_id] = rep
     return rep
 
 
 def main():
     seq_ids = []
     run_completed = False
+    committer: SpoolAsyncCommitter | None = None
     if len(sys.argv) != 4:
         print(
             "Usage: python eitlem_prediction_script_batch.py input_file.csv output_file.csv kinetics_type"
@@ -180,16 +207,43 @@ def main():
         )
         eitlem_model.eval()
 
+        cache_dir = Path(ESM_EMB_DIR).resolve()
+        cache_dir.mkdir(parents=True, exist_ok=True)
         unique_seq_ids = set(seq_ids)
-        needs_esm = any(
-            not os.path.exists(os.path.join(ESM_EMB_DIR, f"{seq_id}.npy"))
-            for seq_id in unique_seq_ids
+        missing_list, _ready_ids = resolve_missing_ids(
+            unique_seq_ids,
+            cache_dir=cache_dir,
+            suffix=".npy",
         )
+        missing_seq_ids = set(missing_list)
+        needs_esm = len(missing_seq_ids) > 0
         if needs_esm:
             esm_model, alphabet, batch_converter = load_esm_model()
         else:
             print("All EITLEM ESM1v embeddings already on disk, skipping ESM model load.")
             esm_model, alphabet, batch_converter = None, None, None
+
+        async_workers = max(
+            1,
+            int(
+                os.environ.get(
+                    "EITLEM_CACHE_ASYNC_WORKERS",
+                    os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "4"),
+                )
+            ),
+        )
+        spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+        spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+        committer = (
+            SpoolAsyncCommitter(
+                max_workers=async_workers,
+                spool_dir=spool_dir,
+                spool_fallback_dir=spool_fallback,
+            )
+            if needs_esm
+            else None
+        )
+        in_memory_cache: dict[str, np.ndarray] = {}
 
         predictions = []
         total_predictions = len(sequences)
@@ -211,7 +265,15 @@ def main():
 
                 # Get sequence embedding
                 rep = get_sequence_embedding(
-                    sequence, seq_id, esm_model, batch_converter, alphabet
+                    sequence,
+                    seq_id,
+                    esm_model,
+                    batch_converter,
+                    alphabet,
+                    cache_dir=cache_dir,
+                    missing_seq_ids=missing_seq_ids,
+                    committer=committer,
+                    in_memory_cache=in_memory_cache,
                 )
 
                 sequence_rep = torch.FloatTensor(rep)
@@ -235,6 +297,11 @@ def main():
                 print(f"Error processing sample {idx}: {e}")
                 predictions.append(None)  # Use None for failed predictions
 
+        if committer is not None:
+            committer.wait_for_completion()
+            committer.close()
+            committer = None
+
         if needs_esm:
             del esm_model, alphabet, batch_converter
             gc.collect()
@@ -250,6 +317,11 @@ def main():
         df_output.to_csv(output_file, index=False)
         run_completed = True
     finally:
+        if committer is not None:
+            try:
+                committer.close()
+            except Exception:
+                pass
         if DELETE_EMBEDDINGS_AFTER_RUN or not run_completed:
             for seq_id in set(seq_ids):
                 try:

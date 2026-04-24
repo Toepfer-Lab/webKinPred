@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from api.prediction_engines.runtime_paths import DATA_PATHS
+from tools.gpu_embed_service.cache_io import resolve_missing_ids
 
 
 @dataclass(frozen=True)
@@ -226,7 +227,7 @@ def expected_paths_by_seq(
 
 
 def _partition_missing(expected: dict[str, set[str]]) -> tuple[dict[str, set[str]], dict[str, set[str]], set[Path], int, int, int]:
-    missing_paths_by_seq: dict[str, set[str]] = {}
+    missing_paths_by_seq = missing_paths_by_seq_from_snapshot(expected)
     path_to_seqs: dict[str, set[str]] = {}
     watch_dirs: set[Path] = set()
 
@@ -234,7 +235,7 @@ def _partition_missing(expected: dict[str, set[str]]) -> tuple[dict[str, set[str
     need_computation = 0
 
     for seq_id, paths in expected.items():
-        missing = {p for p in paths if not Path(p).exists()}
+        missing = missing_paths_by_seq.get(seq_id, set())
         cached_already += len(paths) - len(missing)
         need_computation += len(missing)
 
@@ -261,10 +262,7 @@ def _step_from_paths(
     *,
     gpu_enabled: bool = True,
 ) -> EmbeddingStepPlan:
-    missing: list[str] = []
-    for seq_id, paths in step_paths_by_seq.items():
-        if any(not Path(p).exists() for p in paths):
-            missing.append(seq_id)
+    missing = sorted(missing_paths_by_seq_from_snapshot(step_paths_by_seq).keys())
     return EmbeddingStepPlan(
         step_key=step_key,
         missing_seq_ids=missing,
@@ -391,10 +389,11 @@ def _step_plans_for_profile(
         if parallel_enabled:
             if full_expected_paths is None:
                 full_expected_paths = {}
+            missing_all = missing_paths_by_seq_from_snapshot(full_expected_paths)
             missing_any_path = {
                 sid
                 for sid, paths in full_expected_paths.items()
-                if any(not Path(p).exists() for p in paths)
+                if sid in missing_all and paths
             }
             orchestrated_sids = sorted(missing_any_path | missing_bs)
             return [
@@ -407,11 +406,7 @@ def _step_plans_for_profile(
                 )
             ]
 
-        missing_t5 = {
-            sid
-            for sid, paths in prott5_paths.items()
-            if any(not Path(p).exists() for p in paths)
-        }
+        missing_t5 = set(missing_paths_by_seq_from_snapshot(prott5_paths).keys())
         t5_full_sids = sorted(missing_bs | missing_t5)
 
         return [
@@ -425,6 +420,49 @@ def _step_plans_for_profile(
         ]
 
     return []
+
+
+def missing_paths_by_seq_from_snapshot(expected: dict[str, set[str]]) -> dict[str, set[str]]:
+    """Resolve missing artifacts without per-path filesystem probes.
+
+    We use per-directory manifest reads with one directory snapshot fallback
+    per cache bucket instead of calling Path.exists() for every expected path.
+    """
+    if not expected:
+        return {}
+
+    group_to_seq_ids: dict[tuple[Path, str], set[str]] = {}
+    path_to_group_and_seq: dict[str, tuple[tuple[Path, str], str]] = {}
+
+    for paths in expected.values():
+        for path_str in paths:
+            path = Path(path_str)
+            group_key = (path.parent, path.suffix)
+            seq_id = path.stem
+            group_to_seq_ids.setdefault(group_key, set()).add(seq_id)
+            path_to_group_and_seq[path_str] = (group_key, seq_id)
+
+    group_to_ready_ids: dict[tuple[Path, str], set[str]] = {}
+    for group_key, seq_ids in group_to_seq_ids.items():
+        cache_dir, suffix = group_key
+        _missing, ready = resolve_missing_ids(
+            seq_ids,
+            cache_dir=cache_dir,
+            suffix=suffix,
+        )
+        group_to_ready_ids[group_key] = ready
+
+    missing_by_seq: dict[str, set[str]] = {}
+    for seq_id, paths in expected.items():
+        seq_missing: set[str] = set()
+        for path_str in paths:
+            group_key, path_seq_id = path_to_group_and_seq[path_str]
+            if path_seq_id not in group_to_ready_ids.get(group_key, set()):
+                seq_missing.add(path_str)
+        if seq_missing:
+            missing_by_seq[seq_id] = seq_missing
+
+    return missing_by_seq
 
 
 def build_embedding_plan(

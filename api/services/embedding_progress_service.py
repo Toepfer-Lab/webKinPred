@@ -28,10 +28,12 @@ from typing import Iterable
 from api.services.embedding_plan_service import (
     expected_paths_by_seq as planner_expected_paths_by_seq,
     method_env_keys as planner_method_env_keys,
+    missing_paths_by_seq_from_snapshot as planner_missing_paths_by_seq_from_snapshot,
     normalise_sequences_for_method as planner_normalise_sequences_for_method,
     resolve_media_and_tools as planner_resolve_media_and_tools,
     resolve_seq_ids_via_cli as planner_resolve_seq_ids_via_cli,
 )
+from tools.gpu_embed_service.cache_io import resolve_missing_ids
 from api.services.progress_service import redis_conn
 
 _KEY_PREFIX = "job_embedding_progress:"
@@ -306,11 +308,6 @@ def _expected_paths_by_seq(
     )
 
 
-def _path_is_ready(path_str: str) -> bool:
-    path = Path(path_str)
-    return path.is_file() and path.stat().st_size > 0
-
-
 def _prepare_plan(
     *,
     method_key: str,
@@ -334,7 +331,7 @@ def _prepare_plan(
     if not expected:
         raise RuntimeError("No embedding cache profile for this method/target.")
 
-    missing_paths_by_seq: dict[str, set[str]] = {}
+    missing_paths_by_seq = planner_missing_paths_by_seq_from_snapshot(expected)
     path_to_seqs: dict[str, set[str]] = {}
     watch_dirs: set[Path] = set()
 
@@ -342,12 +339,11 @@ def _prepare_plan(
     need_computation = 0
 
     for seq_id, paths in expected.items():
-        missing = {p for p in paths if not _path_is_ready(p)}
+        missing = missing_paths_by_seq.get(seq_id, set())
         cached_already += len(paths) - len(missing)
         need_computation += len(missing)
 
         if missing:
-            missing_paths_by_seq[seq_id] = missing
             for path_str in missing:
                 path_to_seqs.setdefault(path_str, set()).add(seq_id)
                 watch_dirs.add(Path(path_str).parent)
@@ -510,10 +506,29 @@ class _EmbeddingTracker:
         return progressed
 
     def _reconcile_pending(self) -> None:
-        progressed = False
-        # iterate over a copy because _mark_path_present mutates _path_to_seqs
+        grouped: dict[tuple[Path, str], set[str]] = {}
+        path_to_meta: dict[str, tuple[tuple[Path, str], str]] = {}
+
         for path_str in list(self._path_to_seqs.keys()):
-            if Path(path_str).exists():
+            path = Path(path_str)
+            group_key = (path.parent, path.suffix)
+            seq_id = path.stem
+            grouped.setdefault(group_key, set()).add(seq_id)
+            path_to_meta[path_str] = (group_key, seq_id)
+
+        ready_by_group: dict[tuple[Path, str], set[str]] = {}
+        for group_key, seq_ids in grouped.items():
+            cache_dir, suffix = group_key
+            _missing, ready = resolve_missing_ids(
+                seq_ids,
+                cache_dir=cache_dir,
+                suffix=suffix,
+            )
+            ready_by_group[group_key] = ready
+
+        progressed = False
+        for path_str, (group_key, seq_id) in path_to_meta.items():
+            if seq_id in ready_by_group.get(group_key, set()):
                 progressed = self._mark_path_present(path_str) or progressed
         if progressed:
             self._write_snapshot(force=False)
@@ -679,8 +694,7 @@ def _consume_inotify_events(
                 # Directory events are handled by periodic reconciliation.
                 continue
 
-            if mask & (_IN_CLOSE_WRITE | _IN_MOVED_TO | _IN_CREATE):
-                if event_path.exists():
-                    progressed = on_file(str(event_path)) or progressed
+            if mask & (_IN_CLOSE_WRITE | _IN_MOVED_TO):
+                progressed = on_file(str(event_path)) or progressed
 
     return progressed

@@ -20,6 +20,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from catpred.inference import PredictionRequest, run_prediction_pipeline
+from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
 
 _VALID_AAS = set("ACDEFGHIKLMNPQRSTVWY")
 _POOL_BATCH = 50  # sequences processed per sub-batch inside each loaded checkpoint model
@@ -226,21 +227,21 @@ def _prepare_seq_pooled_cache(
         for row, seq_id in zip(rows, seq_ids)
     }
 
-    # Use one iterdir() per checkpoint directory instead of one path.exists() per
-    # (seq_id, model_key) pair — the latter generates 7+ NFS lstat() calls each.
-    cached_by_model: dict[str, set[str]] = {}
-    for model_key, _ in checkpoint_models:
-        model_cache_dir = (cache_root / parameter / model_key).resolve()
-        if model_cache_dir.is_dir():
-            cached_by_model[model_key] = {
-                f.stem for f in model_cache_dir.iterdir() if f.suffix == ".pt"
-            }
-        else:
-            cached_by_model[model_key] = set()
-
     cache_paths: dict[str, dict[str, Path]] = {}
     missing_by_model: dict[str, list[str]] = {}
-    any_missing = False
+    cache_dir_by_model: dict[str, Path] = {
+        model_key: (cache_root / parameter / model_key).resolve()
+        for model_key, _ in checkpoint_models
+    }
+    for model_key, _ in checkpoint_models:
+        missing_ids, _ready_ids = resolve_missing_ids(
+            seq_ids,
+            cache_dir=cache_dir_by_model[model_key],
+            suffix=".pt",
+        )
+        if missing_ids:
+            missing_by_model[model_key] = missing_ids
+
     for seq_id in seq_ids:
         seq_cache_paths: dict[str, Path] = {}
         for model_key, _ in checkpoint_models:
@@ -251,12 +252,9 @@ def _prepare_seq_pooled_cache(
                 seq_id=seq_id,
             )
             seq_cache_paths[model_key] = path
-            if seq_id not in cached_by_model[model_key]:
-                any_missing = True
-                missing_by_model.setdefault(model_key, []).append(seq_id)
         cache_paths[seq_id] = seq_cache_paths
 
-    if not any_missing:
+    if not any(missing_by_model.values()):
         return cache_paths
 
     os.environ.setdefault("PROTEIN_EMBED_USE_CPU", "1")
@@ -268,26 +266,37 @@ def _prepare_seq_pooled_cache(
     for seq_id in missing_seq_ids:
         esm_by_seq_id[seq_id] = get_single_esm_repr(sequence_by_id[seq_id]).cpu()
 
-    for model_key, checkpoint_path in checkpoint_models:
-        pending_seq_ids = sorted(set(missing_by_model.get(model_key, [])))
-        if not pending_seq_ids:
-            continue
+    async_workers = max(1, int(os.environ.get("GPU_EMBED_CACHE_ASYNC_WORKERS", "8")))
+    spool_dir = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_DIR", "/dev/shm/webkinpred-gpu-cache"))
+    spool_fallback = Path(os.environ.get("GPU_EMBED_CACHE_SPOOL_FALLBACK_DIR", "/tmp/webkinpred-gpu-cache"))
+    with SpoolAsyncCommitter(
+        max_workers=async_workers,
+        spool_dir=spool_dir,
+        spool_fallback_dir=spool_fallback,
+    ) as committer:
+        for model_key, checkpoint_path in checkpoint_models:
+            pending_seq_ids = sorted(set(missing_by_model.get(model_key, [])))
+            if not pending_seq_ids:
+                continue
 
-        model = load_checkpoint(str(checkpoint_path), device=torch.device("cpu"))
-        model.eval()
-        for batch_start in range(0, len(pending_seq_ids), _POOL_BATCH):
-            batch = pending_seq_ids[batch_start : batch_start + _POOL_BATCH]
-            with torch.no_grad():
-                for seq_id in batch:
-                    output_path = cache_paths[seq_id][model_key]
-                    output_path.parent.mkdir(parents=True, exist_ok=True)
-                    pooled = _compute_seq_pooled_output(
-                        model=model,
-                        sequence=sequence_by_id[seq_id],
-                        seq_id=seq_id,
-                        esm_feature=esm_by_seq_id[seq_id],
-                    )
-                    torch.save(pooled, output_path)
+            model = load_checkpoint(str(checkpoint_path), device=torch.device("cpu"))
+            model.eval()
+            model_cache_dir = cache_dir_by_model[model_key]
+            for batch_start in range(0, len(pending_seq_ids), _POOL_BATCH):
+                batch = pending_seq_ids[batch_start : batch_start + _POOL_BATCH]
+                with torch.no_grad():
+                    for seq_id in batch:
+                        pooled = _compute_seq_pooled_output(
+                            model=model,
+                            sequence=sequence_by_id[seq_id],
+                            seq_id=seq_id,
+                            esm_feature=esm_by_seq_id[seq_id],
+                        )
+                        committer.submit_torch_tensor(
+                            cache_dir=model_cache_dir,
+                            seq_id=seq_id,
+                            tensor=pooled,
+                        )
 
     return cache_paths
 
