@@ -220,6 +220,22 @@ def get_molt5_embeddings(
     device: torch.device,
     batch_size: int = 32,
 ) -> np.ndarray:
+    if not smiles_list:
+        return np.zeros((0, 768), dtype=np.float32)
+
+    # Compute MolT5 embeddings once per unique substrate, then map back to
+    # the original row order.
+    unique_smiles: list[str] = []
+    unique_index_by_smiles: dict[str, int] = {}
+    row_to_unique_idx: list[int] = []
+    for smiles in smiles_list:
+        idx = unique_index_by_smiles.get(smiles)
+        if idx is None:
+            idx = len(unique_smiles)
+            unique_index_by_smiles[smiles] = idx
+            unique_smiles.append(smiles)
+        row_to_unique_idx.append(idx)
+
     tokenizer = T5Tokenizer.from_pretrained(str(model_path), local_files_only=True)
     model = T5EncoderModel.from_pretrained(
         str(model_path),
@@ -228,9 +244,9 @@ def get_molt5_embeddings(
     ).to(device)
     model.eval()
 
-    embeddings: list[np.ndarray] = []
-    for start in range(0, len(smiles_list), batch_size):
-        batch = smiles_list[start : start + batch_size]
+    unique_embeddings: list[np.ndarray] = []
+    for start in range(0, len(unique_smiles), batch_size):
+        batch = unique_smiles[start : start + batch_size]
         encoded = tokenizer(
             batch,
             return_tensors="pt",
@@ -248,9 +264,10 @@ def get_molt5_embeddings(
         for idx in range(hidden.shape[0]):
             seq_len = int(attn[idx].sum())
             vec = hidden[idx][: max(seq_len - 1, 1)].mean(axis=0)
-            embeddings.append(vec.astype(np.float32))
+            unique_embeddings.append(vec.astype(np.float32))
 
-    return np.stack(embeddings).astype(np.float32)
+    unique_arr = np.stack(unique_embeddings).astype(np.float32)
+    return unique_arr[np.asarray(row_to_unique_idx, dtype=np.int64)]
 
 
 def get_maccs(smiles_list: list[str]) -> np.ndarray:

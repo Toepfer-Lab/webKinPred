@@ -57,9 +57,9 @@ PREFERRED_METHOD_ORDER = [
     "EITLEM",
     "CataPro",
     "CatPred",
-    "DLKcat",
     "KinForm-L",
     "KinForm-H",
+    "DLKcat",
 ]
 METHOD_KEY_ALIASES = {
     "eitlem": "EITLEM",
