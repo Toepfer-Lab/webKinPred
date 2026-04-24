@@ -2,9 +2,10 @@
 # deploy.sh — rebuild changed services and reclaim space from old image layers
 #
 # Usage:
-#   ./deploy.sh                     # prod (default)
+#   ./deploy.sh                     # prod (default, prunes dangling images)
 #   ./deploy.sh dev                 # dev compose
 #   ./deploy.sh prod celery         # rebuild only the celery worker
+#   SKIP_PRUNE=1 ./deploy.sh        # skip dangling image prune
 #
 # How space is reclaimed:
 #   Each `--build` tags the new image (e.g. webkinpred-worker:latest) and
@@ -48,11 +49,11 @@ echo "==> Building and starting services (compose: $COMPOSE_FILE) ..."
 DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 \
   sudo docker compose "${COMPOSE_ARGS[@]}" up -d --build --remove-orphans "$@"
 
-if [[ "${PRUNE_DANGLING_IMAGES:-0}" == "1" ]]; then
+if [[ "${SKIP_PRUNE:-0}" != "1" ]]; then
   echo "==> Pruning dangling images to reclaim disk space ..."
   sudo docker image prune -f
 else
-  echo "==> Skipping dangling image prune (set PRUNE_DANGLING_IMAGES=1 to enable)."
+  echo "==> Skipping dangling image prune (SKIP_PRUNE=1)."
 fi
 
 echo "==> Done."
