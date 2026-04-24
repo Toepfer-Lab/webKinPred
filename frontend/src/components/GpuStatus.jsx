@@ -5,14 +5,26 @@ import apiClient from './appClient';
 import '../styles/components/GpuStatus.css';
 
 const BENCHMARK_DATA = [
-  { method: 'DLKcat',    uncachedCpu: '32 s',         uncachedGpu: '', cached: 'N/A'        },
-  { method: 'CatPred',   uncachedCpu: '14 min 0 s',   uncachedGpu: '', cached: '23 s'       },
-  { method: 'EITLEM',    uncachedCpu: '18 min 13 s',  uncachedGpu: '', cached: '4 min 11 s' },
-  { method: 'TurNup',    uncachedCpu: '19 min 36 s',  uncachedGpu: '', cached: '3 min 48 s' },
-  { method: 'CataPro',   uncachedCpu: '25 min 9 s',   uncachedGpu: '', cached: '41 s'       },
-  { method: 'UniKP',     uncachedCpu: '33 min 46 s',  uncachedGpu: '', cached: '4 min 7 s'  },
-  { method: 'KinForm-L', uncachedCpu: '54 min 38 s',  uncachedGpu: '', cached: '37 s'       },
-  { method: 'KinForm-H', uncachedCpu: '56 min 10 s',  uncachedGpu: '', cached: '36 s'       },
+  {
+    method: 'DLKcat',
+    uncachedCpu: '32 s',
+    uncachedGpu: '32 s',
+    cached: 'N/A',
+    cachedTooltip: 'Does not use PLM embeddings',
+  },
+  { method: 'CatPred',   uncachedCpu: '14 min 0 s',   uncachedGpu: '5 min 54 s', cached: '23 s'      },
+  {
+    method: 'EITLEM',
+    uncachedCpu: '18 min 13 s',
+    uncachedGpu: '7 min 43 s',
+    cached: 'N/A',
+    cachedTooltip: 'uses full per-residue embeddings, thus not cached on server',
+  },
+  { method: 'TurNup',    uncachedCpu: '19 min 36 s',  uncachedGpu: '3 min 53 s', cached: '3 min 48 s' },
+  { method: 'CataPro',   uncachedCpu: '25 min 9 s',   uncachedGpu: '1 min 37 s', cached: '41 s'       },
+  { method: 'UniKP',     uncachedCpu: '33 min 46 s',  uncachedGpu: '1 min 28 s', cached: '4 min 7 s'  },
+  { method: 'KinForm-L', uncachedCpu: '54 min 38 s',  uncachedGpu: '3 min 49 s', cached: '37 s'       },
+  { method: 'KinForm-H', uncachedCpu: '56 min 10 s',  uncachedGpu: '3 min 42 s', cached: '36 s'       },
 ];
 
 export default function GpuStatus({ layout = 'home' }) {
@@ -118,12 +130,15 @@ export default function GpuStatus({ layout = 'home' }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {BENCHMARK_DATA.map(({ method, uncachedGpu, uncachedCpu, cached }) => (
+                        {BENCHMARK_DATA.map(({ method, uncachedGpu, uncachedCpu, cached, cachedTooltip }) => (
                           <tr key={method}>
                             <td className="benchmark-method">{method}</td>
                             <td className={`benchmark-time ${uncachedGpu ? '' : 'benchmark-empty'}`}>{uncachedGpu || '—'}</td>
                             <td className="benchmark-time">{uncachedCpu ?? '—'}</td>
-                            <td className={`benchmark-time ${cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}`}>
+                            <td
+                              className={`benchmark-time ${cached === 'N/A' ? 'benchmark-na' : cached ? '' : 'benchmark-empty'}`}
+                              title={cachedTooltip || undefined}
+                            >
                               {cached ?? '—'}
                             </td>
                           </tr>
