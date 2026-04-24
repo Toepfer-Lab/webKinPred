@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import warnings
@@ -55,11 +56,26 @@ from utils import set_seed  # noqa: E402
 from configs import get_cfg_defaults  # noqa: E402
 from scripts.embedding import ESM_model  # noqa: E402
 
+logger = logging.getLogger(__name__)
+
 ##ToDo : Cuda device designation (e.g. cuda:0 vs cuda:1)
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 SEED_LIST = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
 
+# Add at module level:
+_ESM_MODEL_CACHE: dict[torch.device, Any] = {}
+
+def _get_esm_model(device: torch.device) -> Any:
+    """Lazy-load ESM model with device-specific caching."""
+    if device not in _ESM_MODEL_CACHE:
+        from scripts.embedding import ESM_model
+        model = ESM_model()
+        model.device = device
+        model.eval()
+        _ESM_MODEL_CACHE[device] = model
+        logger.info(f"Loaded ESM model on {device}")
+    return _ESM_MODEL_CACHE[device]
 
 def _additional_data_dir() -> Path:
     env_value = os.environ.get("OmniESI_ADDITIONAL_DATA")
@@ -272,10 +288,10 @@ def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
             print(f"Progress: {i + 1}/{total}", flush=True)
         return {"predictions": predictions, "invalid_indices": sorted(set(invalid_indices))}
 
-    torch.cuda.empty_cache()
     try:
-        esm_model = ESM_model()
-        esm_model.device = device
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        esm_model = _get_esm_model(device)
     except Exception as exc:
         raise RuntimeError(f"Failed to initialize ESM model: {exc}") from exc
 
