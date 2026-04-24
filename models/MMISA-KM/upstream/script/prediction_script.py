@@ -188,7 +188,12 @@ def _build_mol_graph(smiles: str) -> Data | None:
     # Extract full 78-dim features for each atom
     x_rows: list[np.ndarray] = []
     for atom in mol.GetAtoms():
-        x_rows.append(atom_features(atom))
+        feat = atom_features(atom)
+        # Apply L1 normalization to match original pipeline
+        feat_sum = feat.sum()
+        if feat_sum > 1e-8:  # Avoid division by zero
+            feat = feat / feat_sum
+        x_rows.append(feat)
     
     x = torch.tensor(np.stack(x_rows), dtype=torch.float32)
     
