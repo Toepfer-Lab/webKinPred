@@ -22,6 +22,15 @@ except Exception:  # pragma: no cover - torch availability depends on runtime en
 _MANIFEST_NAME = "manifest.json"
 
 
+def _unlink_if_exists(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
 def _atomic_write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -37,7 +46,7 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
         os.replace(tmp_path, path)
     finally:
         if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
+            _unlink_if_exists(tmp_path)
 
 
 def _safe_stat_nbytes(path: Path) -> int:
@@ -229,7 +238,7 @@ class SpoolAsyncCommitter:
                 root.mkdir(parents=True, exist_ok=True)
                 probe = root / ".probe"
                 probe.write_text("ok", encoding="utf-8")
-                probe.unlink(missing_ok=True)
+                _unlink_if_exists(probe)
                 return root.resolve()
             except OSError:
                 continue
@@ -266,8 +275,8 @@ class SpoolAsyncCommitter:
             nbytes = _safe_stat_nbytes(dest_path)
             return dest_path.parent.resolve(), dest_path.name, nbytes
         finally:
-            tmp_path.unlink(missing_ok=True)
-            spool_path.unlink(missing_ok=True)
+            _unlink_if_exists(tmp_path)
+            _unlink_if_exists(spool_path)
 
     def _submit_spooled(self, *, cache_dir: Path, seq_id: str, suffix: str, spool_path: Path) -> None:
         self._assert_open()
@@ -347,4 +356,3 @@ class SpoolAsyncCommitter:
         finally:
             self.close()
         return False
-
