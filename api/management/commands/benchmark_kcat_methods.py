@@ -52,14 +52,14 @@ PRODUCT_POOL = [
 DEFAULT_API_BASE_URL = "https://predictor.openkinetics.org/api/v1"
 GPU_OFFLOAD_KCAT_METHOD_IDS = {"KinForm-H", "KinForm-L", "UniKP", "TurNup", "CataPro", "EITLEM", "CatPred"}
 PREFERRED_METHOD_ORDER = [
-    "KinForm-L",
-    "KinForm-H",
     "UniKP",
     "TurNup",
     "EITLEM",
     "CataPro",
     "CatPred",
     "DLKcat",
+    "KinForm-L",
+    "KinForm-H",
 ]
 METHOD_KEY_ALIASES = {
     "eitlem": "EITLEM",

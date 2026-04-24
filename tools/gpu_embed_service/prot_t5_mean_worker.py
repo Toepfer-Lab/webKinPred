@@ -5,11 +5,16 @@ import argparse
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 from transformers import T5EncoderModel, T5Tokenizer
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from tools.gpu_embed_service.cache_io import SpoolAsyncCommitter, resolve_missing_ids
 
@@ -115,4 +120,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

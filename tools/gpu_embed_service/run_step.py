@@ -126,6 +126,14 @@ def _kinform_env(repo_root: Path, media_path: Path, tools_path: Path) -> dict[st
     # GPU embed service should run embedding workloads on CUDA, not CPU fallback.
     env.setdefault("KINFORM_REQUIRE_CUDA", "1")
     env.setdefault("GPU_REPO_ROOT", str(repo_root))
+    repo_root_str = str(repo_root)
+    existing_pythonpath = str(env.get("PYTHONPATH", "")).strip()
+    if existing_pythonpath:
+        parts = [p for p in existing_pythonpath.split(os.pathsep) if p]
+        if repo_root_str not in parts:
+            env["PYTHONPATH"] = os.pathsep.join([repo_root_str] + parts)
+    else:
+        env["PYTHONPATH"] = repo_root_str
     return env
 
 
