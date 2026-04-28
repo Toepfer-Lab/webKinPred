@@ -21,7 +21,11 @@ _DATA_PATH_REL = {
     "CataPro": "models/CataPro",
     "KinForm": "models/KinForm/results",
     "MMISA-KM": "models/MMISA-KM",
-    "OmniESI": "models/OmniESI/code",
+    "MMISA-KM_cache": "cache/mmisa_km",
+    "OmniESI": "models/OmniESI",
+    "OmniESI-additional": "models/OmniESI/upstream/OmniESI_additional_data/additional_data",
+    "OmniESI-embed": "media/sequence_info/omniesi_esm2",
+    "OmniESI-weights": "cache/omniesi",
     "media": "media",
     "tools": "tools",
 }

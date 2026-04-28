@@ -39,6 +39,10 @@ if CATPRED_ROOT:
     DATA_PATHS["CatPred_production_checkpoints"] = f"{CATPRED_ROOT}/data/pretrained/production"
     PREDICTION_SCRIPTS["CatPred"] = f"{CATPRED_ROOT}/catpred/integration/webkinpred_adapter.py"
 
+OMNIESI_ADDITIONAL_DATA = os.environ.get("WEBKINPRED_OMNIESI_ADDITIONAL_DATA")
+if OMNIESI_ADDITIONAL_DATA:
+    DATA_PATHS["OmniESI-additional"] = OMNIESI_ADDITIONAL_DATA
+    
 SIMILARITY_DATASETS = build_similarity_datasets(FASTAS_DIR)
 TARGET_DBS = {label: item["target_db"] for label, item in SIMILARITY_DATASETS.items()}
 
