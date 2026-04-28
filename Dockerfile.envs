@@ -91,7 +91,6 @@ COPY docker-requirements/mmisakm_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     --mount=type=cache,id=webkinpred-pip-py39,target=/root/.cache/pip,sharing=locked \
     mamba create -n mmisakm_env python=3.9 -c conda-forge -y \
-    && mamba install -n mmisakm_env -c conda-forge rdkit=2022.9.5 -y \
     && conda run -n mmisakm_env pip install -r docker-requirements/mmisakm_requirements.txt
 
 
@@ -100,7 +99,6 @@ COPY docker-requirements/omniesi_requirements.txt ./docker-requirements/
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     --mount=type=cache,id=webkinpred-pip-py38,target=/root/.cache/pip,sharing=locked \
     mamba create -n omniesi_env python=3.8 -c conda-forge -y \
-    && mamba install -n omniesi_env -c conda-forge rdkit=2024.03.6 -y \
     && conda run -n omniesi_env pip install -r docker-requirements/omniesi_requirements.txt
 
 FROM base AS env-pseq2sites
