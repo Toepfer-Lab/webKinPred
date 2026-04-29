@@ -61,7 +61,7 @@ def atom_features(atom) -> np.ndarray:
     features.extend(one_of_k_encoding(atom.GetTotalNumHs(), list(range(11))))
     
     # 11-dim: Implicit valence
-    features.extend(one_of_k_encoding_unk(atom.GetImplicitValence(), list(range(11))))
+    features.extend(one_of_k_encoding_unk(atom.GetValence(getExplicit=False), list(range(11))))
     
     # 1-dim: Aromaticity flag
     features.append(1.0 if atom.GetIsAromatic() else 0.0)
