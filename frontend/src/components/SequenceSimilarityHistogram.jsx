@@ -3,6 +3,7 @@ import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js';
 import { Accordion, Row, Col } from 'react-bootstrap';
 import { InfoCircle, Diagram3, GearFill } from 'react-bootstrap-icons';
+import { useTheme } from '../context/ThemeContext';
 import '../styles/components/SequenceSimilarityHistogram.css';
 
 // Register Chart.js components
@@ -11,6 +12,11 @@ ChartJS.register(BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 const GRANULARITY_BINS = [1, 2, 4, 5, 10, 20, 25, 50, 100];
 
 function SequenceSimilarityHistogram({ similarityData }) {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+  const axisColor = isDark ? 'rgba(255,255,255,0.75)' : '#2d2060';
+  const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(110,90,200,0.15)';
+
   const models = similarityData ? Object.keys(similarityData) : [];
   const [activeModel, setActiveModel] = useState(models[0] || '');
   const [similarityType, setSimilarityType] = useState('max'); // 'max' or 'mean'
@@ -113,14 +119,14 @@ function SequenceSimilarityHistogram({ similarityData }) {
     },
     scales: {
       x: {
-        title: { display: true, text: `${similarityType === 'mean' ? 'Mean' : 'Max'} Sequence Similarity (%)`, color: 'white', font: { size: 14 } },
-        ticks: { color: 'white', font: { size: 12 } },
-        grid: { color: 'rgba(255,255,255,0.1)' }
+        title: { display: true, text: `${similarityType === 'mean' ? 'Mean' : 'Max'} Sequence Similarity (%)`, color: axisColor, font: { size: 14 } },
+        ticks: { color: axisColor, font: { size: 12 } },
+        grid: { color: gridColor }
       },
       y: {
-        title: { display: true, text: 'Frequency of Your Input Sequences (%)', color: 'white', font: { size: 14 } },
-        ticks: { color: 'white', font: { size: 12 } },
-        grid: { color: 'rgba(255,255,255,0.1)' },
+        title: { display: true, text: 'Frequency of Your Input Sequences (%)', color: axisColor, font: { size: 14 } },
+        ticks: { color: axisColor, font: { size: 12 } },
+        grid: { color: gridColor },
         beginAtZero: true
       }
     }
@@ -129,11 +135,11 @@ function SequenceSimilarityHistogram({ similarityData }) {
   return (
     <div>
       <div className="mt-4">
-        <h5 className="text-white-50 text-center mb-3">Chart Controls</h5>
-        <div className="p-3 rounded" style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+        <h5 className="sim-section-label text-center mb-3">Chart Controls</h5>
+        <div className="p-3 rounded sim-controls-wrapper">
           <div className="row justify-content-between align-items-center mb-4">
             <div className="col-md-auto mb-3 mb-md-0">
-              <label className="form-label d-block mb-2 small text-white-50">Dataset</label>
+              <label className="form-label d-block mb-2 small sim-section-label">Dataset</label>
               <div className="col-md-auto mb-3 mb-md-0">
                             <div>
                               {models.map(model => (
@@ -150,12 +156,12 @@ function SequenceSimilarityHistogram({ similarityData }) {
               </div>
             </div>
             <div className="col-md-auto">
-              <label className="form-label d-block mb-2 small text-white-50">View Type</label>
+              <label className="form-label d-block mb-2 small sim-section-label">View Type</label>
               <div className="btn-group" role="group">
-                <button type="button" className={`btn ${similarityType === 'max' ? 'btn-light text-dark fw-bold' : 'btn-outline-light'}`} onClick={() => setSimilarityType('max')}>
+                <button type="button" className={`btn sim-view-btn ${similarityType === 'max' ? 'active' : ''}`} onClick={() => setSimilarityType('max')}>
                   Max
                 </button>
-                <button type="button" className={`btn ${similarityType === 'mean' ? 'btn-light text-dark fw-bold' : 'btn-outline-light'}`} onClick={() => setSimilarityType('mean')}>
+                <button type="button" className={`btn sim-view-btn ${similarityType === 'mean' ? 'active' : ''}`} onClick={() => setSimilarityType('mean')}>
                   Mean
                 </button>
               </div>
@@ -163,8 +169,8 @@ function SequenceSimilarityHistogram({ similarityData }) {
           </div>
 
           <div className="row justify-content-center">
-            <div className="col-lg-7 d-flex align-items-center text-white">
-              <label htmlFor="granularity-slider" className="form-label me-3 mb-0 small text-white-50">Granularity</label>
+            <div className="col-lg-7 d-flex align-items-center sim-slider-row">
+              <label htmlFor="granularity-slider" className="form-label me-3 mb-0 small sim-section-label">Granularity</label>
               <input
                 type="range"
                 className="form-range"
@@ -182,7 +188,7 @@ function SequenceSimilarityHistogram({ similarityData }) {
       
       {averageSimilarity !== null && (
         <div className="text-center my-4">
-          <p className="text-white mb-0">Input sequences vs. <strong>{activeModel}</strong> training data ({similarityType} similarity)</p>
+          <p className="sim-body-text mb-0">Input sequences vs. <strong>{activeModel}</strong> training data ({similarityType} similarity)</p>
         </div>
       )}
       <Bar data={data} options={options} />
@@ -208,11 +214,11 @@ function SequenceSimilarityHistogram({ similarityData }) {
             <Row className="mt-2">
               <Col md={6}>
                 <strong>Max Similarity</strong>
-                <p className="text-white-50 small">The single highest percentage identity found for each of your sequences. This represents the "best match" in the training data.</p>
+                <p className="sim-section-label small">The single highest percentage identity found for each of your sequences. This represents the "best match" in the training data.</p>
               </Col>
               <Col md={6}>
                 <strong>Mean Similarity</strong>
-                <p className="text-white-50 small">The average percentage identity calculated from all significant alignment hits found for each of your sequences.</p>
+                <p className="sim-section-label small">The average percentage identity calculated from all significant alignment hits found for each of your sequences.</p>
               </Col>
             </Row>
           </Accordion.Body>

@@ -64,8 +64,21 @@ def _fetch_cat_weights(seq_id: str,
 def _weighted_mean(arr: np.ndarray, w: np.ndarray, normalize=True) -> np.ndarray:
     """Length‑L weights → weighted mean over axis‑0."""
     w = np.asarray(w, dtype=float)
+    if arr.shape[0] != w.shape[0]:
+        raise ValueError(
+            f"Weight length ({w.shape[0]}) does not match residue length ({arr.shape[0]})."
+        )
+
+    # Drop invalid weights instead of propagating NaNs/Inf into pooled vectors.
+    w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
+
     if normalize:
-        w = w / w.sum()
+        denom = float(w.sum())
+        if not np.isfinite(denom) or denom <= 0.0:
+            # Degenerate binding-site scores (all zeros or non-finite): fall back
+            # to the unweighted residue mean so downstream prediction can proceed.
+            return arr.mean(axis=0)
+        w = w / denom
     return (arr * w[:, None]).sum(axis=0)
 
 def _load_residue_embeddings(seq_id: str,

@@ -47,6 +47,65 @@
   width: 100%;
 }
 
+/* ── Navbar end controls (theme toggle + hamburger) ── */
+.navbar-end-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+}
+
+/* ── Theme toggle button ── */
+.theme-toggle-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.theme-toggle-track {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.82);
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.theme-toggle-track:hover,
+.theme-toggle-btn:hover .theme-toggle-track {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #ffffff;
+}
+
+.theme-toggle-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Light mode toggle track */
+[data-theme="light"] .theme-toggle-track {
+  border-color: rgba(110, 90, 200, 0.32);
+  background: rgba(110, 90, 200, 0.08);
+  color: #4a3f7a;
+}
+
+[data-theme="light"] .theme-toggle-btn:hover .theme-toggle-track {
+  background: rgba(110, 90, 200, 0.15);
+  border-color: rgba(110, 90, 200, 0.55);
+  color: #1c1443;
+}
+
 /* ── GPU Status Banner ── */
 .gpu-sw {
   border-bottom: 1px solid transparent;

@@ -149,7 +149,7 @@ def load_kcat(data_path: Path | None = None) -> Tuple[np.ndarray, np.ndarray, np
             smi = _first_present(r, "smiles", "Smiles", "Substrate")
             if seq is None or smi is None:
                 continue
-            if len(seq) <= 1499:
+            if len(seq) <= 1500:
                 valid.append((seq, smi))
         if not valid:
             raise ValueError("No valid kcat rows found in input data.")
@@ -163,7 +163,7 @@ def load_kcat(data_path: Path | None = None) -> Tuple[np.ndarray, np.ndarray, np
             val = _first_present(r, "value", "kcat", "kcat_value")
             if seq is None or smi is None or val is None:
                 continue
-            if len(seq) <= 1499 and float(val) > 0:
+            if len(seq) <= 1500 and float(val) > 0:
                 valid.append((seq, smi, float(val)))
         if not valid:
             raise ValueError("No valid kcat rows with positive target values found in input data.")
@@ -195,7 +195,7 @@ def load_km(data_path: Path | None = None) -> Tuple[np.ndarray, np.ndarray, np.n
             smi = _first_present(r, "smiles", "Smiles", "Substrate")
             if seq is None or smi is None:
                 continue
-            if len(seq) <= 1499:
+            if len(seq) <= 1500:
                 valid.append((seq, smi))
         if not valid:
             raise ValueError("No valid KM rows found in input data.")
@@ -209,7 +209,7 @@ def load_km(data_path: Path | None = None) -> Tuple[np.ndarray, np.ndarray, np.n
             log10_km = _first_present(r, "log10_KM", "log10_km", "KM", "km_value")
             if seq is None or smi is None or log10_km is None:
                 continue
-            if len(seq) <= 1499 and "." not in smi:
+            if len(seq) <= 1500 and "." not in smi:
                 valid.append((seq, smi, float(log10_km)))
         if not valid:
             raise ValueError("No valid KM rows with target values found in input data.")

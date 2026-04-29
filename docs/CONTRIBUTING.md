@@ -20,7 +20,7 @@ descriptor = MethodDescriptor(
     repo_url="https://github.com/...",
 
     supports=["kcat"],                 # e.g. ["kcat"], ["Km"], ["kcat/Km"], or combinations
-    input_format="single",             # "single", "multi", or "full reaction" ("full reaction" uses "multi" internally)
+    input_format="single",             # backend contract: "single" or "multi"
     output_cols={"kcat": "kcat (1/s)"},
     max_seq_len=1024,
 
@@ -38,9 +38,12 @@ descriptor = MethodDescriptor(
 ### What these fields mean
 
 - `supports`: which targets your method predicts.
-- `input_format`: CSV shape expected from users.
-  Use `single`, `multi`, or `full reaction` in user-facing docs.
-  In descriptors, `full reaction` is represented by `multi` (`Substrates` + `Products`).
+- `input_format`: backend CSV column contract expected by the method.
+  Descriptors use `single` for the `Substrate` column contract and `multi` for
+  the full-reaction `Substrates` + `Products` contract.
+  User-facing docs should describe the three CSV formats: `single`, `multi`
+  (dot-joined co-substrates in `Substrate`), and `full reaction`
+  (`Substrates` + `Products`).
 - `col_to_kwarg`: maps CSV columns to kwargs passed into your method runtime.
 - `target_kwargs`: per-target switches (for shared kcat/Km scripts).
 - `subprocess` or `pred_func`: set exactly one.
@@ -143,13 +146,18 @@ def your_method_predictions(
     sequences: list[str],
     public_id: str,
     **kwargs,
-) -> tuple[list, list[int]]:
+) -> tuple[list, list[int] | dict[int, str]]:
     ...
 ```
 
 Return:
 - `predictions`: one value per input row
-- `invalid_indices`: failed row indices relative to input list
+- `invalid_indices`: one of:
+  - `list[int]` of failed row indices relative to input list
+  - `dict[int, str]` mapping failed row indices to clear reasons
+
+Recommendation:
+- Return `dict[int, str]` for richer user feedback in job output and progress views.
 
 ## 3. Register Runtime Paths
 
@@ -200,127 +208,15 @@ If your method can reuse an existing env, skip steps 1-2 and only add the config
 
 ## 4. PLM Embeddings (Optional)
 
-If your method uses PLM embeddings, read [PLM_EMBEDDING_CACHE.md](PLM_EMBEDDING_CACHE.md) before you start.
+The embeddings cache stores reusable PLM outputs under `media/sequence_info`, keyed by `seq_id`.
+We use this to avoid repeated PLM inference for the same sequence across jobs and methods.
 
-### 4.1 Why this layer exists
+GPU offload runs missing embedding work on a remote GPU before prediction starts.
+We use this to reduce CPU load and improve throughput.
+If the remote GPU path fails or is unavailable, prediction falls back to local compute.
 
-- PLM inference is often the slowest part of prediction.
-- The cache is file based under `media/sequence_info`.
-- Cache keys use `seq_id`, not raw sequence text.
-- `seq_id` is resolved through `tools/seqmap/main.py`, then reused across methods.
-- The GPU host is remote. Your code must separate embedding generation from prediction inference.
-
-### 4.2 Current profiles in `embedding_plan_service.py`
-
-- `KinForm-H`, `KinForm-L` -> `kinform_full`
-- `CataPro`, `UniKP` -> `prot_t5_mean`
-- `TurNup` -> `turnup_esm1b`
-- `CatPred` -> `catpred_embed`
-- `EITLEM` -> `eitlem_esm1v`
-
-### 4.3 Current method behaviours
-
-- KinForm-H and KinForm-L
-  - Engine calls GPU precompute before subprocess.
-  - Sparse step logic runs `kinform_t5_full`, `kinform_esm2_layers`, `kinform_esmc_layers` only for missing `seq_id`s.
-- CataPro
-  - Uses the generic subprocess engine.
-  - Generic engine runs GPU precompute.
-  - Reuses `prot_t5_last/mean_vecs`.
-- UniKP
-  - Custom engine runs GPU precompute.
-  - Reuses `prot_t5_last/mean_vecs`.
-- TurNup
-  - Custom engine runs GPU precompute.
-  - Uses `esm1b_turnup`.
-- CatPred
-  - Uses the generic subprocess engine, so GPU precompute runs.
-  - Uses target specific step keys `catpred_embed_kcat` or `catpred_embed_km`.
-  - Caches checkpoint specific pooled tensors in `catpred_esm2/{parameter}/{model_key}/{seq_id}.pt`.
-- EITLEM
-  - Planner profile and GPU step runner support `eitlem_esm1v`.
-  - Current configured prediction script in `config_base.py` is `eitlem_prediction_script_batch.py`.
-  - `models/EITLEM/Code/eitlem_prediction_script.py` shows the preferred ephemeral full-matrix cleanup pattern.
-
-### 4.4 Required execution pattern
-
-1. Resolve valid sequences.
-2. Resolve `seq_id` values.
-3. Compute expected cache files for this method and target.
-4. Build sparse step work with missing files only.
-5. Start embedding tracker before remote submission.
-6. Submit GPU job only when GPU health is online.
-7. Poll GPU job status until done or failed.
-8. Re-check cache completeness.
-9. Continue to prediction subprocess.
-10. Keep fail-open fallback unless you have a strict fail-fast requirement.
-
-### 4.5 Decision rule for new methods
-
-Use this rule when adding PLM support for a method:
-
-1. If your method uses a PLM and artefact type we already support, you must reuse the existing embedding family ([4.6](#46-reuse-an-existing-embedding-family-required-when-applicable)).
-2. If your method introduces a new PLM or a new artefact type, you must add a new embedding family ([4.7](#47-add-a-new-embedding-family-only-when-required)).
-
-Existing PLM caches:
-
-- `prot_t5_last/mean_vecs/{seq_id}.npy`: mean embedding of the last layer from `Rostlab/prot_t5_xl_uniref50` (shared by CataPro and UniKP, also used by KinForm).
-- `prot_t5_last/weighted_vecs/{seq_id}.npy`: weighted average of last-layer `Rostlab/prot_t5_xl_uniref50` residue embeddings, with weights from Pseq2Sites binding-site probabilities in `media/pseq2sites/binding_sites_all.tsv` (KinForm).
-- `prot_t5_layer_19/mean_vecs/{seq_id}.npy`: mean embedding of layer 19 from `Rostlab/prot_t5_xl_uniref50` (KinForm).
-- `prot_t5_layer_19/weighted_vecs/{seq_id}.npy`: weighted average of layer 19 `Rostlab/prot_t5_xl_uniref50` residue embeddings, with Pseq2Sites binding-site probabilities (KinForm).
-- `esm2_layer_26/mean_vecs/{seq_id}.npy`: mean embedding from `esm2_t33_650M_UR50D` layer 26 (KinForm).
-- `esm2_layer_26/weighted_vecs/{seq_id}.npy`: weighted average of `esm2_t33_650M_UR50D` layer 26 residue embeddings, with Pseq2Sites binding-site probabilities (KinForm).
-- `esm2_layer_29/mean_vecs/{seq_id}.npy`: mean embedding from `esm2_t33_650M_UR50D` layer 29 (KinForm).
-- `esm2_layer_29/weighted_vecs/{seq_id}.npy`: weighted average of `esm2_t33_650M_UR50D` layer 29 residue embeddings, with Pseq2Sites binding-site probabilities (KinForm).
-- `esmc_layer_24/mean_vecs/{seq_id}.npy`: mean embedding from `esmc_600m` layer 24 (KinForm).
-- `esmc_layer_24/weighted_vecs/{seq_id}.npy`: weighted average of `esmc_600m` layer 24 residue embeddings, with Pseq2Sites binding-site probabilities (KinForm).
-- `esmc_layer_32/mean_vecs/{seq_id}.npy`: mean embedding from `esmc_600m` layer 32 (KinForm).
-- `esmc_layer_32/weighted_vecs/{seq_id}.npy`: weighted average of `esmc_600m` layer 32 residue embeddings, with Pseq2Sites binding-site probabilities (KinForm).
-- `esm1b_turnup/{seq_id}.npy`: TurNup protein vector derived from `esm1b_t33_650M_UR50S` plus the TurNup fine-tuned checkpoint (`model_ESM_binary_A100_epoch_1_new_split.pkl`).
-- `catpred_esm2/{kcat|km}/{model_key}/{seq_id}.pt`: CatPred checkpoint-specific pooled tensor, generated from `esm2_t33_650M_UR50D` residue features and attentive pooling.
-
-### 4.6 Reuse an existing embedding family (required when applicable)
-
-1. Reuse an existing cache artefact layout in `media/sequence_info`.
-2. Map your method key in `_profile_for_method`.
-3. Update `expected_paths_by_seq` only if your artefact list differs.
-4. Ensure your prediction script reads cache first, then computes missing files only.
-5. If you use a custom engine, call `run_gpu_precompute_if_available(...)` before `run_prediction_subprocess(...)`.
-6. If you use `SubprocessEngineConfig`, precompute is already called by `run_generic_subprocess_prediction(...)`.
-7. Add planner tests for mixed cache states.
-8. Add orchestration tests for failed-job fallback behaviour.
-
-### 4.7 Add a new embedding family (only when required)
-
-1. Define a stable artefact path keyed by `seq_id`.
-2. Add expected file mapping in `expected_paths_by_seq`.
-3. Add a new profile mapping in `_profile_for_method`.
-4. Add sparse step partitioning in `_step_plans_for_profile`.
-5. Add step execution in `tools/gpu_embed_service/run_step.py`.
-6. Add optional override command in `tools/gpu_embed_service/gpu_service.env`.
-7. Pass required env paths to subprocess scripts through `data_path_env` or engine `env`.
-8. Add tests for planner sparsity, orchestration, and API status.
-
-### 4.8 Full-matrix policy
-
-- Default rule
-  - Do not persist full residue matrices.
-  - Persist reduced artefacts when reduction is deterministic and substrate independent.
-- CatPred example
-  - CatPred needs ESM2 residue signals plus checkpoint attentive pooling.
-  - The pooled tensor is deterministic for `(seq_id, checkpoint_key)`.
-  - Persist `catpred_esm2/{parameter}/{model_key}/{seq_id}.pt`.
-- EITLEM example
-  - EITLEM consumes a full residue matrix and is not sequence-deterministic.
-  - Preferred pattern is ephemeral files, run prediction, then delete touched files.
-  - See `models/EITLEM/Code/eitlem_prediction_script.py` for this pattern.
-
-### 4.9 Tracking rules
-
-- Embedding progress is file based, not sequence based.
-- Tracker must start before GPU submission.
-- Inotify drives progress updates when files appear.
-- Reconciliation polling handles missed events or non-Linux environments.
+Read the full guide:
+- [PLM_EMBEDDING_CACHE.md](PLM_EMBEDDING_CACHE.md)
 ## 5. Add MMseqs Similarity Dataset (Optional)
 
 If you want to include your method's training data in the sequence-similarity validation, read:
@@ -329,6 +225,7 @@ If you want to include your method's training data in the sequence-similarity va
 This includes:
 - reusing an existing dataset by extending its label (for example `DLKcat/UniKP/YourMethod`)
 - adding a new FASTA + DB dataset
+- setting `method_keys` in each dataset entry so backend method mapping works
 
 ## 6. Test Your Integration End-to-End
 

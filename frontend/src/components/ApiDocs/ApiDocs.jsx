@@ -543,12 +543,33 @@ export default function ApiDocs() {
     { "row": 5, "value": "!!!FAKE!!!", "error": "Invalid amino acid characters" }
   ],
   "lengthViolations": {
-    "TurNup": { "count": 3, "limit": 1024 },
-    "EITLEM": { "count": 3, "limit": 1024 },
-    "UniKP":  { "count": 1, "limit": 1000 }
+    "DLKcat": 0,
+    "TurNup": 3,
+    "EITLEM": 3,
+    "UniKP": 1,
+    "CataPro": 1,
+    "KinForm-H": 0,
+    "KinForm-L": 0,
+    "CatPred": 0,
+    "Server": 0
+  },
+  "lengthLimits": {
+    "DLKcat": null,
+    "TurNup": 1024,
+    "EITLEM": 1024,
+    "UniKP": 1000,
+    "CataPro": 1000,
+    "KinForm-H": 1500,
+    "KinForm-L": 1500,
+    "CatPred": 2048,
+    "Server": 10000
   },
   "similarity": null
 }`} />
+              <div className="api-callout api-callout-info">
+                <code>lengthViolations</code> reports counts and <code>lengthLimits</code> reports limits for all
+                registered methods (derived from descriptor <code>max_seq_len</code>).
+              </div>
 
               <p className="example-section-label">Response — with <code>runSimilarity=true</code></p>
               <CodeBlock language="json" code={`{
@@ -846,9 +867,12 @@ export default function ApiDocs() {
 
           <div className="api-callout api-callout-info" style={{ marginTop: '1rem' }}>
             <strong>Substrate format:</strong> Use SMILES strings (e.g.{' '}
-            <code>CC(=O)O</code> for acetic acid) or InChI strings. For TurNup,
-            separate multiple substrates/products with semicolons:{' '}
-            <code>CC(=O)O;C1CCCCC1</code>.
+            <code>CC(=O)O</code> for acetic acid) or InChI strings. Single inputs use
+            one value in <code>Substrate</code>. Multi-substrate inputs dot-join
+            co-substrates in <code>Substrate</code>, e.g. <code>CC(=O)O.O</code>.
+            Full-reaction inputs, used by TurNup, separate multiple substrates or
+            products with semicolons in <code>Substrates</code> and <code>Products</code>,
+            e.g. <code>CC(=O)O;C1CCCCC1</code>.
           </div>
         </section>
 

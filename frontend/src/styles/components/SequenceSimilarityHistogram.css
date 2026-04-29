@@ -1,3 +1,37 @@
+/* Semantic theme-aware classes for the histogram */
+.sim-controls-wrapper {
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sim-section-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.sim-body-text {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.sim-slider-row {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.sim-view-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.7);
+}
+.sim-view-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.sim-view-btn.active {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.6);
+  color: #fff;
+  font-weight: 600;
+}
+
 /* Custom Accordion Styling for Dark Theme */
 .custom-accordion {
   --bs-accordion-color: #ffffff;

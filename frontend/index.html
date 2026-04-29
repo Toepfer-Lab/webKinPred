@@ -32,6 +32,13 @@
     -->
 
     <!-- Umami Analytics is injected lazily from src/index.jsx to keep it off the critical path. -->
+    <!-- Prevent flash of wrong theme by applying saved theme before first paint -->
+    <script>
+      (function () {
+        var t = localStorage.getItem('wkp-theme');
+        document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

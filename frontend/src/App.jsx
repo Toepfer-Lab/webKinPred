@@ -1,6 +1,7 @@
 // App.js
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { ThemeProvider } from './context/ThemeContext';
 import JobSubmissionForm from './components/job-submission/JobSubmissionForm';
 import JobStatus from './components/JobStatus';
 import About from './components/About';
@@ -45,9 +46,11 @@ function AppContent() {
 
 function App() {
   return (
-    <Router>
-      <AppContent />
-    </Router>
+    <ThemeProvider>
+      <Router>
+        <AppContent />
+      </Router>
+    </ThemeProvider>
   );
 }
 

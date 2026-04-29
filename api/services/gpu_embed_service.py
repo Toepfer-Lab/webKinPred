@@ -104,16 +104,12 @@ def get_gpu_status(*, force_refresh: bool = False) -> dict:
     url = f"{base}/health"
     try:
         remote = _http_json("GET", url)
+        is_online = bool(remote.get("online", True))
         payload = {
             "configured": True,
-            "online": bool(remote.get("online", True)),
-            "mode": "gpu" if bool(remote.get("online", True)) else "cpu",
-            "reason": None if bool(remote.get("online", True)) else "remote_offline",
-            "gpu_name": remote.get("gpu_name") or remote.get("name"),
-            "free_vram_gb": remote.get("free_vram_gb"),
-            "total_vram_gb": remote.get("total_vram_gb"),
-            "active_jobs": int(remote.get("active_jobs", 0) or 0),
-            "raw": remote,
+            "online": is_online,
+            "mode": "gpu" if is_online else "cpu",
+            "reason": None if is_online else "remote_offline",
         }
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as exc:
         payload = {

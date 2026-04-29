@@ -46,6 +46,7 @@ export default function JobSubmissionForm() {
               handleLongSeqs={state.handleLongSeqs}
               setHandleLongSeqs={state.setHandleLongSeqs}
               similarityData={state.similarityData}
+              methods={state.methods || {}}
             />
           )}
 

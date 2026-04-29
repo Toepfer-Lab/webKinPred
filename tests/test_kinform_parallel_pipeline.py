@@ -53,6 +53,18 @@ class KinFormParallelHelpersTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             kpo.weighted_mean_from_residue(residue, weights)
 
+    def test_weighted_mean_zero_sum_falls_back_to_global_mean(self):
+        residue = np.array([[1.0, 3.0], [5.0, 7.0]], dtype=np.float32)
+        weights = np.array([0.0, 0.0], dtype=np.float64)
+        out = kpo.weighted_mean_from_residue(residue, weights)
+        np.testing.assert_allclose(out, residue.mean(axis=0), rtol=1e-5, atol=1e-5)
+
+    def test_weighted_mean_non_finite_weights_fall_back_to_global_mean(self):
+        residue = np.array([[2.0, 4.0], [6.0, 8.0]], dtype=np.float32)
+        weights = np.array([np.nan, np.inf], dtype=np.float64)
+        out = kpo.weighted_mean_from_residue(residue, weights)
+        np.testing.assert_allclose(out, residue.mean(axis=0), rtol=1e-5, atol=1e-5)
+
     def test_merge_binding_site_rows_atomic_preserves_existing(self):
         with tempfile.TemporaryDirectory(prefix="pseq_stream_rows_") as tmp:
             tsv = Path(tmp) / "binding_sites_all.tsv"

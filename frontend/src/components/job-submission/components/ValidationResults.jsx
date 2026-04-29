@@ -20,9 +20,42 @@ export default function ValidationResults({
   handleLongSeqs,
   setHandleLongSeqs,
   similarityData,
+  methods,
 }) {
   const lengthViol = submissionResult?.length_violations || {};
-  const hasAnyLengthIssues = Object.values(lengthViol).some((v) => v > 0);
+  const lengthLimits = submissionResult?.length_limits || {};
+  const toCount = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const serverViolations = toCount(lengthViol.Server);
+  const serverLimit = Number(lengthLimits.Server) || 10000;
+
+  const modelViolationRows = Object.entries(lengthViol)
+    .filter(([key]) => key !== 'Server')
+    .map(([key, value]) => {
+      const methodMeta = methods?.[key];
+      const hasLimitFromValidation = Object.prototype.hasOwnProperty.call(lengthLimits, key);
+      const rawLimit = hasLimitFromValidation ? lengthLimits[key] : methodMeta?.maxSeqLen;
+      const numericLimit = Number(rawLimit);
+      const hasFiniteLimit = rawLimit !== null && Number.isFinite(numericLimit);
+
+      return {
+        key,
+        label: methodMeta?.displayName || key,
+        limitLabel:
+          rawLimit === null
+            ? '∞'
+            : (hasFiniteLimit ? numericLimit.toLocaleString() : 'Unknown'),
+        sortLimit: hasFiniteLimit ? numericLimit : Number.POSITIVE_INFINITY,
+        violations: toCount(value),
+      };
+    })
+    .filter((row) => row.violations > 0)
+    .sort((a, b) => a.sortLimit - b.sortLimit || a.label.localeCompare(b.label));
+
+  const hasAnyLengthIssues = modelViolationRows.length > 0 || serverViolations > 0;
   const hasInvalidItems =
     submissionResult?.invalid_substrates?.length > 0 || submissionResult?.invalid_proteins?.length > 0;
 
@@ -107,31 +140,22 @@ export default function ValidationResults({
                       </tr>
                     </thead>
                     <tbody className="text-secondary">
-                      {[
-                        { key: 'KinForm-H', label: 'KinForm-H', limit: 1500 },
-                        { key: 'KinForm-L', label: 'KinForm-L', limit: 1500 },
-                        { key: 'EITLEM', label: 'EITLEM', limit: 1024 },
-                        { key: 'TurNup', label: 'TurNup', limit: 1024 },
-                        { key: 'UniKP', label: 'UniKP', limit: 1000 },
-                        { key: 'DLKcat', label: 'DLKcat', limit: '∞' },
-                      ].map(({ key, label, limit }) =>
-                        lengthViol[key] > 0 ? (
-                          <tr key={key}>
-                            <td className="text-white">{label}</td>
-                            <td className="text-white">{limit}</td>
-                            <td className="text-danger">{lengthViol[key]}</td>
-                          </tr>
-                        ) : null
-                      )}
+                      {modelViolationRows.map(({ key, label, limitLabel, violations }) => (
+                        <tr key={key}>
+                          <td className="text-white">{label}</td>
+                          <td className="text-white">{limitLabel}</td>
+                          <td className="text-danger">{violations}</td>
+                        </tr>
+                      ))}
                     </tbody>
                     <tfoot>
-                      {lengthViol.Server > 0 && (
+                      {serverViolations > 0 && (
                         <tr style={{ borderTop: '2px solid rgb(78, 78, 78)' }}>
                           <td className="text-white">
                             <strong>Overall Server Limit</strong>
                           </td>
-                          <td className="text-white">10,000</td>
-                          <td className="text-danger">{lengthViol.Server}</td>
+                          <td className="text-white">{serverLimit.toLocaleString()}</td>
+                          <td className="text-danger">{serverViolations}</td>
                         </tr>
                       )}
                     </tfoot>
@@ -204,4 +228,5 @@ ValidationResults.propTypes = {
   handleLongSeqs: PropTypes.string.isRequired,
   setHandleLongSeqs: PropTypes.func.isRequired,
   similarityData: PropTypes.object,
+  methods: PropTypes.object,
 };

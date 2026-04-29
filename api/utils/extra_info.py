@@ -1,6 +1,5 @@
 """
 api/utils/extra_info.py
-───────────────────────
 Utility for turning an experimental-lookup dict into the
 'Extra Information' string shown in output.csv
 """

@@ -12,6 +12,86 @@
 }
 
 /* ------------------------------------------------------------
+   About page components (replaces inline styles)
+   ------------------------------------------------------------ */
+.about-container {
+  color: #e8e6f0;
+  max-width: 900px;
+}
+
+.about-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 1.5rem;
+  margin-bottom: 2.5rem;
+}
+
+.about-header h2 {
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 0;
+}
+
+.about-institution-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.about-institution-name {
+  font-weight: 600;
+  color: #ffffff;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  margin-bottom: 0.2rem;
+}
+
+.about-institution-location {
+  font-size: 0.8rem;
+  color: rgba(180, 160, 255, 0.8);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.about-member-badge {
+  background: rgba(180, 160, 255, 0.12);
+  border: 1px solid rgba(180, 160, 255, 0.25);
+  color: #d4c5ff;
+  border-radius: 20px;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.about-citation-heading {
+  font-weight: 600;
+  color: #ffffff;
+  border-left: 3px solid rgba(180, 160, 255, 0.7);
+  padding-left: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.about-citation-area {
+  background: #0e0c1f !important;
+  color: #dcd8f0 !important;
+  border: 1px solid rgba(140, 115, 230, 0.28) !important;
+  border-radius: 0.5rem;
+}
+
+/* Contribute page link */
+.contribute-link {
+  color: rgba(195, 178, 255, 0.88);
+}
+
+.contribute-link:hover {
+  color: #d8c8ff;
+}
+
+/* ------------------------------------------------------------
    Page layout
    ------------------------------------------------------------ */
 .api-docs {
@@ -233,14 +313,14 @@
 }
 
 .api-key-copy-btn {
-  background: rgba(100, 150, 255, 0.2);
-  color: #aac4ff;
-  border: 1px solid rgba(100, 150, 255, 0.3);
+  background: rgba(90, 80, 210, 0.2);
+  color: #b8bcf8;
+  border: 1px solid rgba(110, 100, 220, 0.32);
   flex-shrink: 0;
 }
 
 .api-key-copy-btn:hover:not(:disabled) {
-  background: rgba(100, 150, 255, 0.35);
+  background: rgba(90, 80, 210, 0.32);
 }
 
 .api-key-copy-btn.copied {
@@ -306,9 +386,9 @@
 }
 
 .method-post {
-  background: rgba(100, 150, 255, 0.2);
-  color: #aac4ff;
-  border: 1px solid rgba(100, 150, 255, 0.3);
+  background: rgba(90, 80, 210, 0.2);
+  color: #b8bcf8;
+  border: 1px solid rgba(110, 100, 220, 0.32);
 }
 
 .endpoint-path {

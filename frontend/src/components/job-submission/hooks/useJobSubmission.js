@@ -225,7 +225,12 @@ export default function useJobSubmission() {
         targets: orderedTargets,
         methods: selectedMethodsPayload,
       });
-      const { invalid_substrates, invalid_proteins, length_violations } = validation;
+      const {
+        invalid_substrates,
+        invalid_proteins,
+        length_violations,
+        length_limits,
+      } = validation;
       const simPromise = fetchSequenceSimilaritySummary({
         file: csvFile,
         useExperimental,
@@ -234,7 +239,12 @@ export default function useJobSubmission() {
       const sim = await simPromise;
       if (userCancelledRef.current) return;
       setSimilarityData(sim);
-      setSubmissionResult({ invalid_substrates, invalid_proteins, length_violations });
+      setSubmissionResult({
+        invalid_substrates,
+        invalid_proteins,
+        length_violations,
+        length_limits,
+      });
       setShowValidationResults(true);
     } catch (err) {
       if (!userCancelledRef.current) {

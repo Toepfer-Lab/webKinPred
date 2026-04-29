@@ -10,10 +10,15 @@
   justify-content: center;
   width: 60px;
   height: 60px;
-  background-color: rgba(var(--bs-primary-rgb), 0.1);
-  color: var(--bs-primary);
+  background-color: rgba(140, 115, 230, 0.14);
+  color: rgba(195, 178, 255, 0.9);
   border-radius: 50%;
   margin-bottom: 1rem;
+}
+
+[data-theme="light"] .step-icon {
+  background-color: rgba(110, 90, 200, 0.1);
+  color: #5040a8;
 }
 
 .format-section-label {
@@ -361,12 +366,12 @@
 
 .publication-link {
   text-decoration: none;
-  color: rgba(233, 233, 233, 0.9);
+  color: rgba(195, 178, 255, 0.88);
   transition: color 0.2s ease;
 }
 
 .publication-link:hover {
-  color: rgba(233, 233, 233, 1);
+  color: #d8c8ff;
   text-decoration: underline;
 }
 

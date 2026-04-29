@@ -160,8 +160,10 @@ def _gpu_health_snapshot() -> dict[str, Any]:
 
 def _token_is_valid(auth_header: str | None) -> bool:
     token = str(os.environ.get("GPU_EMBED_SERVICE_TOKEN", "")).strip()
+    # Token must always be configured — enforced at startup via _on_startup.
+    # An empty token never grants access; the service refuses to start without one.
     if not token:
-        return True
+        return False
     if not auth_header:
         return False
     parts = auth_header.split(" ", 1)
@@ -174,18 +176,17 @@ def _require_auth(authorization: str | None) -> None:
 
 
 def _run_command(
-    cmd: str | list[str],
+    cmd: list[str],
     *,
     env: dict[str, str],
     log_path: Path,
-    shell: bool,
 ) -> None:
-    display_cmd = cmd if isinstance(cmd, str) else " ".join(shlex.quote(part) for part in cmd)
+    display_cmd = " ".join(shlex.quote(part) for part in cmd)
     _append_job_log(log_path, f"$ {display_cmd}")
 
     proc = subprocess.Popen(
         cmd,
-        shell=shell,
+        shell=False,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -227,6 +228,44 @@ def _run_command(
         )
 
 
+def _resolve_step_cmd_parts(
+    cmd_template: str,
+    *,
+    step_key: str,
+    seq_ids_arg: str,
+    seq_count: int,
+    seq_id_to_seq_file: str,
+    job_id: str,
+) -> list[str]:
+    """
+    Parse a step command template (from an env-var override) into an argument
+    list safe for subprocess with shell=False.
+
+    The template is first tokenised with shlex.split() so that quoted paths
+    containing spaces survive intact.  Placeholder tokens are then replaced by
+    exact string equality inside each individual argument, so user-supplied
+    values (seq_ids_arg, job_id) are *never* interpreted by a shell — even if
+    they contain semicolons, backticks, or other metacharacters.
+
+    Supported placeholders: {step_key}, {seq_ids}, {seq_count},
+                            {seq_id_to_seq_file}, {job_id}
+    """
+    substitutions = {
+        "{step_key}": step_key,
+        "{seq_ids}": seq_ids_arg,
+        "{seq_count}": str(seq_count),
+        "{seq_id_to_seq_file}": seq_id_to_seq_file,
+        "{job_id}": job_id,
+    }
+    parts = shlex.split(cmd_template)
+    resolved: list[str] = []
+    for part in parts:
+        for placeholder, value in substitutions.items():
+            part = part.replace(placeholder, value)
+        resolved.append(part)
+    return resolved
+
+
 def _execute_step(
     step_key: str,
     seq_ids: list[str],
@@ -235,12 +274,13 @@ def _execute_step(
     job_id: str | None = None,
     log_path: Path,
 ) -> None:
-    # If an override command is configured, use it.
-    # Available format args: {step_key}, {seq_ids}, {seq_count}, {seq_id_to_seq_file}, {job_id}
+    # If an override command is configured via env var, use it.
+    # Available placeholders: {step_key}, {seq_ids}, {seq_count},
+    #                         {seq_id_to_seq_file}, {job_id}
     env_key = f"GPU_EMBED_STEP_CMD_{step_key.upper()}"
-    cmd = str(os.environ.get(env_key, "")).strip()
+    cmd_template = str(os.environ.get(env_key, "")).strip()
 
-    if cmd:
+    if cmd_template:
         seq_ids_arg = ",".join(seq_ids)
         seq_count = len(seq_ids)
         step_seq_map = {sid: seq_id_to_seq[sid] for sid in seq_ids if sid in seq_id_to_seq}
@@ -251,14 +291,15 @@ def _execute_step(
             with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
                 json.dump(step_seq_map, fh)
                 tmp_file = fh.name
-            cmd = cmd.format(
+            cmd_parts = _resolve_step_cmd_parts(
+                cmd_template,
                 step_key=step_key,
-                seq_ids=seq_ids_arg,
+                seq_ids_arg=seq_ids_arg,
                 seq_count=seq_count,
                 seq_id_to_seq_file=tmp_file,
                 job_id=job_id or "",
             )
-            _run_command(cmd, env=cmd_env, log_path=log_path, shell=True)
+            _run_command(cmd_parts, env=cmd_env, log_path=log_path)
         finally:
             if tmp_file and os.path.exists(tmp_file):
                 os.unlink(tmp_file)
@@ -308,7 +349,6 @@ def _execute_step(
             ],
             env=cmd_env,
             log_path=log_path,
-            shell=False,
         )
     finally:
         if seq_id_to_seq_file and os.path.exists(seq_id_to_seq_file):
@@ -394,11 +434,19 @@ def _status_payload(job_id: str, state: _JobState) -> EmbedJobStatus:
 
 @app.on_event("startup")
 def _on_startup() -> None:
+    token = str(os.environ.get("GPU_EMBED_SERVICE_TOKEN", "")).strip()
+    if not token:
+        raise RuntimeError(
+            "GPU_EMBED_SERVICE_TOKEN is not set. "
+            "The service cannot start without a configured auth token. "
+            "Set the variable in gpu_service.env (see gpu_service.env.example)."
+        )
     _ensure_worker()
 
 
 @app.get("/health")
-def health() -> dict:
+def health(authorization: str | None = Header(default=None)) -> dict:
+    _require_auth(authorization)
     gpu = _gpu_health_snapshot()
     return {
         "online": bool(gpu.get("online", True)),
@@ -463,7 +511,6 @@ def get_embed_job_logs(
 
     return {
         "job_id": job_id,
-        "log_path": str(log_path),
         "tail_lines": tail,
         "log_tail": _read_log_tail(log_path, max_lines=tail),
     }

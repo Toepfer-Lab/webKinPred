@@ -24,7 +24,7 @@ export default function Contribute() {
               href={CONTRIBUTING_URL}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: '#aac4ff' }}
+              className="contribute-link"
             >
               {CONTRIBUTING_URL}
             </a>

@@ -48,63 +48,34 @@ const About = () => {
   const copyCitation = () => {
     navigator.clipboard.writeText(citationText)
       .then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
       })
       .catch(err => console.error('Failed to copy: ', err));
   };
 
   return (
     <div className="api-docs-page">
-      <div className="container pt-4 pb-5" style={{ color: '#e8e6f0', maxWidth: '900px' }}>
+      <div className="about-container container pt-4 pb-5">
 
-        {/* Header */}
-        <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '1.5rem', marginBottom: '2.5rem' }}>
-          <h2 style={{ fontWeight: 700, color: '#ffffff', marginBottom: 0 }}>About OpenKineticsPredictor</h2>
+        <div className="about-header">
+          <h2>About OpenKineticsPredictor</h2>
         </div>
 
-        {/* Team Section */}
         <section style={{ marginBottom: '3rem' }}>
-
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' }}>
             {teamInstitutions.map((entry, idx) => (
-              <div
-                key={idx}
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '10px',
-                  padding: '1.1rem 1.25rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.6rem',
-                }}
-              >
+              <div key={idx} className="about-institution-card">
                 <div>
-                  <div style={{ fontWeight: 600, color: '#ffffff', fontSize: '0.95rem', lineHeight: 1.4, marginBottom: '0.2rem' }}>
-                    {entry.institution}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'rgba(180,160,255,0.8)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <div className="about-institution-name">{entry.institution}</div>
+                  <div className="about-institution-location">
                     <span style={{ opacity: 0.6 }}>&#x1F4CD;</span>
                     {entry.location}
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginTop: '0.25rem' }}>
                   {entry.members.map((member, mIdx) => (
-                    <span
-                      key={mIdx}
-                      style={{
-                        background: 'rgba(180,160,255,0.12)',
-                        border: '1px solid rgba(180,160,255,0.25)',
-                        color: '#d4c5ff',
-                        borderRadius: '20px',
-                        padding: '0.2rem 0.7rem',
-                        fontSize: '0.82rem',
-                        fontWeight: 500,
-                      }}
-                    >
-                      {member}
-                    </span>
+                    <span key={mIdx} className="about-member-badge">{member}</span>
                   ))}
                 </div>
               </div>
@@ -112,22 +83,19 @@ const About = () => {
           </div>
         </section>
 
-        {/* Citation Section */}
         <section style={{ marginBottom: '2rem' }}>
-          <h4 style={{
-            fontWeight: 600,
-            color: '#ffffff',
-            borderLeft: '3px solid rgba(180,160,255,0.7)',
-            paddingLeft: '0.75rem',
-            marginBottom: '1rem',
-          }}>
-            Citation
-          </h4>
+          <h4 className="about-citation-heading">Citation</h4>
           <Form.Group controlId="citationText">
-            <Form.Control as="textarea" rows={3} readOnly value={citationText} style={{ background: 'rgba(13,11,26,0.8)', color: '#dcd8f0', border: '1px solid rgba(255,255,255,0.12)' }} />
+            <Form.Control
+              as="textarea"
+              rows={3}
+              readOnly
+              value={citationText}
+              className="about-citation-area"
+            />
           </Form.Group>
           <Button variant="secondary" className="mt-2" onClick={copyCitation}>
-            {copied ? "Copied!" : "Copy Citation"}
+            {copied ? 'Copied!' : 'Copy Citation'}
           </Button>
         </section>
 

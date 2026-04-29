@@ -30,18 +30,28 @@
   padding: 0;
   border: none;
   border-radius: 999px;
-  background: rgba(var(--bs-primary-rgb), 0.15);
-  color: var(--bs-primary);
+  background: rgba(140, 115, 230, 0.18);
+  color: rgba(195, 178, 255, 0.9);
   cursor: pointer;
   transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
 }
 .exp-info-btn:hover,
 .exp-info-btn:focus-visible {
-  background: rgba(var(--bs-primary-rgb), 0.25);
+  background: rgba(140, 115, 230, 0.28);
   outline: none;
-  box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.25);
+  box-shadow: 0 0 0 0.2rem rgba(140, 115, 230, 0.22);
 }
 .exp-info-btn:active { transform: scale(0.96); }
+
+[data-theme="light"] .exp-info-btn {
+  background: rgba(110, 90, 200, 0.12);
+  color: #5040a8;
+}
+[data-theme="light"] .exp-info-btn:hover,
+[data-theme="light"] .exp-info-btn:focus-visible {
+  background: rgba(110, 90, 200, 0.2);
+  box-shadow: 0 0 0 0.2rem rgba(110, 90, 200, 0.2);
+}
 
 /* Tooltip – solid background, clear text (Bootstrap 5 vars) */
 .tooltip.exp-tooltip {
@@ -61,8 +71,8 @@
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: rgba(var(--bs-primary-rgb), 0.4);
-  color: #fff;
+  background: rgba(140, 115, 230, 0.35);
+  color: #f0ecff;
   font-size: 12px;
   font-weight: 350;
   cursor: pointer;
@@ -71,8 +81,17 @@
 }
 .info-icon:hover,
 .info-icon:focus {
-  background: rgba(var(--bs-primary-rgb), 0.2);
+  background: rgba(140, 115, 230, 0.22);
   outline: none;
+}
+
+[data-theme="light"] .info-icon {
+  background: rgba(110, 90, 200, 0.2);
+  color: #3d2e8a;
+}
+[data-theme="light"] .info-icon:hover,
+[data-theme="light"] .info-icon:focus {
+  background: rgba(110, 90, 200, 0.32);
 }
 /* ─── pill badge for column names ──────────────────────────── */
 .csv-col {

@@ -3,6 +3,7 @@ Validation service that orchestrates input validation workflows.
 """
 
 from typing import Dict, Any
+from api.methods.registry import get_model_limits
 from api.utils.validation_utils import (
     parse_csv_file,
     validate_csv_structure,
@@ -10,6 +11,25 @@ from api.utils.validation_utils import (
     validate_protein_sequences,
     clean_data_for_json,
 )
+
+try:
+    from webKinPred.config_docker import SERVER_LIMIT
+except ImportError:
+    from webKinPred.config_local import SERVER_LIMIT
+
+
+def _build_length_limits_payload() -> Dict[str, int | None]:
+    """
+    Return per-method sequence limits derived from method descriptors.
+
+    Infinite limits are represented as None for JSON transport.
+    Includes a top-level Server limit.
+    """
+    limits: Dict[str, int | None] = {}
+    for method_key, max_len in get_model_limits().items():
+        limits[method_key] = None if max_len == float("inf") else int(max_len)
+    limits["Server"] = int(SERVER_LIMIT)
+    return limits
 
 
 def validate_input_file(file) -> Dict[str, Any]:
@@ -44,5 +64,6 @@ def validate_input_file(file) -> Dict[str, Any]:
         "invalid_substrates": clean_data_for_json(invalid_substrates),
         "invalid_proteins": clean_data_for_json(invalid_proteins),
         "length_violations": clean_data_for_json(length_violations),
+        "length_limits": _build_length_limits_payload(),
         "status_code": 200,
     }

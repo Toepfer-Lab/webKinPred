@@ -12,6 +12,7 @@ import tempfile
 from typing import Any
 
 import pandas as pd
+from rdkit import Chem, rdBase
 import torch
 
 _THIS_FILE = Path(__file__).resolve()
@@ -376,6 +377,23 @@ def _row_smiles(row: dict[str, Any]) -> str:
     return str(substrate).strip()
 
 
+def _catpred_invalid_reason(sequence: str, substrate: str) -> str | None:
+    if not sequence:
+        return "Missing protein sequence"
+    if not set(sequence).issubset(_VALID_AAS):
+        return "Invalid protein sequence (unsupported amino acid characters)"
+    if not substrate:
+        return "Missing substrate"
+
+    with rdBase.BlockLogs():
+        mol = Chem.MolFromSmiles(substrate)
+    if mol is None:
+        return "Invalid substrate (not a valid SMILES)"
+    if mol.GetNumHeavyAtoms() == 0:
+        return f"Unsupported substrate for CatPred: {substrate} contains no heavy atoms"
+    return None
+
+
 def _predict_rows_chunk(
     *,
     rows: list[dict[str, Any]],
@@ -446,14 +464,17 @@ def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     valid_rows: list[dict[str, Any]] = []
     invalid_indices: list[int] = []
+    invalid_reasons: dict[int, str] = {}
     for idx, row in enumerate(rows):
         sequence = str(row.get("sequence", "")).strip()
         substrate = row.get("substrates", row.get("substrate", row.get("Substrate", "")))
         if isinstance(substrate, list):
             substrate = substrate[0] if len(substrate) == 1 else ""
         substrate = str(substrate).strip()
-        if not sequence or not substrate or not set(sequence).issubset(_VALID_AAS):
+        invalid_reason = _catpred_invalid_reason(sequence, substrate)
+        if invalid_reason:
             invalid_indices.append(idx)
+            invalid_reasons[idx] = invalid_reason
             continue
         valid_rows.append(row)
 
@@ -461,7 +482,11 @@ def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not valid_rows:
         for idx in range(len(rows)):
             print(f"Progress: {idx + 1}/{len(rows)}", flush=True)
-        return {"predictions": predictions, "invalid_indices": invalid_indices}
+        return {
+            "predictions": predictions,
+            "invalid_indices": invalid_indices,
+            "invalid_reasons": invalid_reasons,
+        }
 
     repo_root = _env_path("CATPRED_REPO_ROOT", _repo_root())
     media_path = _env_path("CATPRED_MEDIA_PATH", repo_root / "media")
@@ -502,6 +527,7 @@ def run_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "predictions": predictions,
         "invalid_indices": sorted(set(invalid_indices)),
+        "invalid_reasons": invalid_reasons,
     }
 
 

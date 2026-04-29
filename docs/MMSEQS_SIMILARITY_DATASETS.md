@@ -27,8 +27,12 @@ This makes your method visible under that same similarity dataset option without
 "Your Dataset Label": {
     "fasta_filename": "your_dataset_sequences.fasta",
     "db_name": "targetdb_your_dataset",
+    "method_keys": ["YourMethod"],
 }
 ```
+
+`method_keys` is required for method to dataset mapping in kcat similarity enrichment.
+Use one key for one method, or list multiple keys when methods share one training set.
 
 3. Build the MMseqs target DB:
 ```bash

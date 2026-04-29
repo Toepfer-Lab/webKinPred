@@ -64,7 +64,7 @@ def run_generic_subprocess_prediction(
       }
 
     Output JSON:
-      {"predictions": [...], "invalid_indices": [...]}   OR just [...]
+      {"predictions": [...], "invalid_indices": [...], "invalid_reasons": {...}}   OR just [...]
     """
     cfg = desc.subprocess
     if cfg is None:
@@ -198,10 +198,10 @@ def run_generic_subprocess_prediction(
         predictions[global_idx] = _normalise_prediction(value)
 
     # Merge method-reported invalids (indices into valid_rows) into the reason dict
-    for local_idx in invalid_subset:
+    for local_idx, reason in invalid_subset.items():
         if 0 <= local_idx < len(valid_indices):
             seq_idx = valid_indices[local_idx]
-            invalid_reasons.setdefault(seq_idx, "Prediction could not be made")
+            invalid_reasons.setdefault(seq_idx, reason)
 
     _cleanup(input_file, output_file)
     return predictions, invalid_reasons
@@ -390,7 +390,7 @@ def _build_subprocess_env(desc: MethodDescriptor) -> dict[str, str]:
     return env
 
 
-def _read_output(method_label: str, output_file: str) -> tuple[list[Any], list[int]]:
+def _read_output(method_label: str, output_file: str) -> tuple[list[Any], dict[int, str]]:
     try:
         with open(output_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -401,24 +401,34 @@ def _read_output(method_label: str, output_file: str) -> tuple[list[Any], list[i
         ) from e
 
     if isinstance(data, list):
-        return data, []
+        return data, {}
 
     if isinstance(data, dict):
         preds = data.get("predictions")
         invalid = data.get("invalid_indices", [])
+        invalid_reasons = data.get("invalid_reasons", {})
 
         if not isinstance(preds, list):
             raise PredictionError(
                 f"{method_label} output format is invalid: 'predictions' must be a list."
             )
 
-        invalid_out: list[int] = []
+        invalid_out: dict[int, str] = {}
         if isinstance(invalid, list):
             for idx in invalid:
                 try:
-                    invalid_out.append(int(idx))
+                    invalid_out[int(idx)] = "Prediction could not be made"
                 except (TypeError, ValueError):
                     continue
+        if isinstance(invalid_reasons, dict):
+            for idx, reason in invalid_reasons.items():
+                try:
+                    local_idx = int(idx)
+                except (TypeError, ValueError):
+                    continue
+                reason_text = str(reason).strip()
+                if reason_text:
+                    invalid_out[local_idx] = reason_text
         return preds, invalid_out
 
     raise PredictionError(

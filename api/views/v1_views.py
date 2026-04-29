@@ -97,12 +97,18 @@ def api_health(request):
 @require_GET
 def api_gpu_status(request):
     """
-    Return current GPU embed-service reachability and capacity snapshot.
+    Return a minimal GPU availability snapshot for the frontend.
 
-    Uses server-side TTL caching to avoid hammering the remote GPU host.
+    Internal fields (gpu_name, vram, active_jobs, raw GPU response) are
+    deliberately stripped — the browser only needs to know online/offline.
     """
     status = get_gpu_status()
-    return JsonResponse(status)
+    public = {
+        "configured": bool(status.get("configured", False)),
+        "online": bool(status.get("online", False)),
+        "mode": str(status.get("mode", "cpu")),
+    }
+    return JsonResponse(public)
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +138,7 @@ def api_list_methods(request):
           "repoUrl":           str,
           "moreInfo":          str,
           "supports":          list[str],   // e.g. ["kcat", "Km", "kcat/Km"]
-          "inputFormat":       str,         // "single" or "multi" ("full reaction" is represented as "multi")
+          "inputFormat":       str,         // backend contract: "single" or "multi"
           "maxSeqLen":         int | null,  // null means no limit
           "requiredColumns":   list[str],   // includes "Protein Sequence"
           "substrateFormat":   str,
@@ -153,9 +159,12 @@ def api_list_methods(request):
         max_len = None if desc.max_seq_len == float("inf") else int(desc.max_seq_len)
         required_cols = ["Protein Sequence"] + list(desc.col_to_kwarg.keys())
         substrate_fmt = (
-            "Semicolon-separated SMILES or InChI strings for Substrates and Products (full reaction)"
+            "Full reaction: semicolon-separated SMILES or InChI strings in Substrates and Products"
             if desc.input_format == "multi"
-            else "SMILES or InChI"
+            else (
+                "Single substrate: one SMILES/InChI per row; multi-substrate inputs use dot-joined "
+                "co-substrates in the same Substrate cell"
+            )
         )
         return {
             "id": key,
@@ -683,7 +692,9 @@ def api_validate(request):
       rowCount          — total number of data rows in the input
       invalidSubstrates — list of rows with unparseable SMILES/InChI strings
       invalidProteins   — list of rows with invalid amino-acid sequences
-      lengthViolations  — per-model violation counts and sequence-length limits
+      lengthViolations  — per-model violation counts (all registered methods + Server)
+      lengthLimits      — per-model max sequence lengths from descriptors
+                          (null means no limit), plus Server
       similarity        — null when not requested; otherwise a dict keyed by
                           method name, each containing histogram_max,
                           histogram_mean, average_max_similarity,
@@ -736,6 +747,7 @@ def api_validate(request):
             "invalidSubstrates": validation_result["invalid_substrates"],
             "invalidProteins": validation_result["invalid_proteins"],
             "lengthViolations": validation_result["length_violations"],
+            "lengthLimits": validation_result["length_limits"],
             "similarity": similarity,
         }
     )

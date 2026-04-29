@@ -57,6 +57,7 @@ def validate_input(request):
             "invalid_substrates": validation_result["invalid_substrates"],
             "invalid_proteins": validation_result["invalid_proteins"],
             "length_violations": validation_result["length_violations"],
+            "length_limits": validation_result["length_limits"],
         },
         status=validation_result["status_code"],
     )

@@ -221,10 +221,18 @@ def weighted_mean_from_residue(residue_embedding: np.ndarray, weights: np.ndarra
         raise ValueError(
             f"Weight length ({weights.shape[0]}) != residue length ({residue_embedding.shape[0]})"
         )
-    denom = float(np.sum(weights))
-    if denom <= 0.0:
-        raise ValueError("Binding-site weights sum to zero; cannot normalize.")
-    normalized = weights.astype(np.float32) / denom
+    safe_weights = np.nan_to_num(
+        weights.astype(np.float32, copy=False),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
+    denom = float(np.sum(safe_weights))
+    if not np.isfinite(denom) or denom <= 0.0:
+        # Degenerate scores (all zeros/non-finite): keep pipeline moving by
+        # falling back to global mean pooling.
+        return residue_embedding.astype(np.float32).mean(axis=0).astype(np.float32, copy=False)
+    normalized = safe_weights / denom
     vec = (residue_embedding.astype(np.float32) * normalized[:, None]).sum(axis=0)
     return vec.astype(np.float32, copy=False)
 
@@ -251,9 +259,12 @@ def weighted_mean_from_residue_gpu(
         raise ValueError(
             f"Weight length ({w.shape[0]}) != residue length ({residue_embedding.shape[0]})"
         )
+    w = torch.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
     denom = torch.sum(w)
-    if float(denom.item()) <= 0.0:
-        raise ValueError("Binding-site weights sum to zero; cannot normalize.")
+    denom_value = float(denom.item())
+    if not np.isfinite(denom_value) or denom_value <= 0.0:
+        out = torch.mean(residue_embedding, dim=0)
+        return out.detach().cpu().numpy().astype(np.float32, copy=False)
     normalized = w / denom
     out = torch.sum(residue_embedding * normalized.unsqueeze(1), dim=0)
     return out.detach().cpu().numpy().astype(np.float32, copy=False)

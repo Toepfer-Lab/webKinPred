@@ -4,6 +4,9 @@
 .env.production
 docker-compose.override.yml
 
+# GPU service environment — contains secrets; use gpu_service.env.example as template
+tools/gpu_embed_service/gpu_service.env
+
 # Runtime artifacts (keep out of repo/root)
 db.sqlite3
 celerybeat-schedule
