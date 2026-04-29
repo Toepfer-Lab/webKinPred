@@ -70,6 +70,7 @@ def unikp_predictions(
     PredictionError
         On subprocess failure or any unrecoverable error.
     """
+    disable_gpu_precompute = bool(kwargs.get("disable_gpu_precompute", False))
     print(f"Running UniKP model (kinetics_type={kinetics_type})...")
     stage_target = "kcat" if kinetics_type.upper() == "KCAT" else "Km"
 
@@ -155,6 +156,7 @@ def unikp_predictions(
         target=stage_target,
         valid_sequences=valid_sequences,
         env=env,
+        disabled=disable_gpu_precompute,
     )
     if _gpu.attempted and not _gpu.completed:
         _log.warning(

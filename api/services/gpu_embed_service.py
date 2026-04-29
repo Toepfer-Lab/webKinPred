@@ -187,6 +187,7 @@ def run_gpu_precompute_if_available(
     target: str,
     valid_sequences: list[str],
     env: dict | None,
+    disabled: bool = False,
 ) -> GpuPrecomputeResult:
     fail_closed = _env_bool("GPU_EMBED_FAIL_CLOSED", default=False)
 
@@ -214,6 +215,17 @@ def run_gpu_precompute_if_available(
                 f"{result.reason or 'unknown_reason'}"
             )
         return result
+
+    if disabled:
+        _log.info(
+            "Skipping GPU precompute for job %s (%s/%s): disabled by request",
+            job_public_id, method_key, target,
+        )
+        disabled_result = GpuPrecomputeResult(
+            False, False, False, False, "disabled_by_request"
+        )
+        _record(disabled_result)
+        return disabled_result
 
     if not valid_sequences:
         _log.info(

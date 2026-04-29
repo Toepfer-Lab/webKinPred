@@ -78,6 +78,7 @@ def process_job_submission_from_params(
                       use_experimental     – bool
                       include_similarity_columns – bool
                       canonicalize_substrates – bool
+                      disable_gpu_precompute – bool, internal benchmark toggle
         file:       A file-like object (Django InMemoryUploadedFile or
                     io.BytesIO) containing the CSV data.
         ip_address: The IP address to charge quota against.
@@ -242,12 +243,14 @@ def dispatch_prediction_task(
     methods = params["methods"]
     canonicalize_substrates = params.get("canonicalize_substrates", True)
     include_similarity_columns = params.get("include_similarity_columns", True)
+    disable_gpu_precompute = params.get("disable_gpu_precompute", False)
 
     print(
         "Dispatching multi-target task: "
         f"targets={targets}, methods={methods}, "
         f"canonicalize_substrates={canonicalize_substrates}, "
-        f"include_similarity_columns={include_similarity_columns}"
+        f"include_similarity_columns={include_similarity_columns}, "
+        f"disable_gpu_precompute={disable_gpu_precompute}"
     )
     run_multi_prediction.delay(
         public_id,
@@ -256,6 +259,7 @@ def dispatch_prediction_task(
         experimental_results or {},
         canonicalize_substrates,
         include_similarity_columns,
+        disable_gpu_precompute,
     )
 
 

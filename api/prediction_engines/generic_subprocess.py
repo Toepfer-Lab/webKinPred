@@ -45,6 +45,7 @@ def run_generic_subprocess_prediction(
     sequences: list[str],
     public_id: str,
     target: str,
+    disable_gpu_precompute: bool = False,
     **kwargs,
 ) -> tuple[list, dict[int, str]]:
     """
@@ -122,6 +123,7 @@ def run_generic_subprocess_prediction(
             target=target,
             valid_sequences=embedding_sequences,
             env=env,
+            disabled=disable_gpu_precompute,
         )
         if _gpu.attempted and not _gpu.completed:
             _log.warning(

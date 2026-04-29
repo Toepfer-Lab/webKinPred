@@ -76,6 +76,7 @@ def run_prediction(
     experimental_results: list | None = None,
     canonicalize_substrates: bool = True,
     include_similarity_columns: bool = True,
+    disable_gpu_precompute: bool = False,
 ) -> None:
     """
     Run a single-target prediction job.
@@ -109,6 +110,7 @@ def run_prediction(
             experimental_results or [],
             canonicalize_substrates=canonicalize_substrates,
             include_similarity_columns=include_similarity_columns,
+            disable_gpu_precompute=disable_gpu_precompute,
         )
         Job.objects.filter(pk=job.pk).update(
             status="Completed",
@@ -141,6 +143,7 @@ def run_both_prediction(
     experimental_results: list | None = None,
     canonicalize_substrates: bool = True,
     include_similarity_columns: bool = True,
+    disable_gpu_precompute: bool = False,
 ) -> None:
     """
     Run a dual-target prediction job (kcat and KM in sequence).
@@ -177,6 +180,7 @@ def run_both_prediction(
             experimental_results or [],
             canonicalize_substrates=canonicalize_substrates,
             include_similarity_columns=include_similarity_columns,
+            disable_gpu_precompute=disable_gpu_precompute,
         )
         Job.objects.filter(pk=job.pk).update(
             status="Completed",
@@ -210,6 +214,7 @@ def run_multi_prediction(
     experimental_results: dict | None = None,
     canonicalize_substrates: bool = True,
     include_similarity_columns: bool = True,
+    disable_gpu_precompute: bool = False,
 ) -> None:
     """
     Run a multi-target prediction job.
@@ -264,6 +269,7 @@ def run_multi_prediction(
             experimental_results=experimental_results or {},
             canonicalize_substrates=canonicalize_substrates,
             include_similarity_columns=include_similarity_columns,
+            disable_gpu_precompute=disable_gpu_precompute,
         )
         Job.objects.filter(pk=job.pk).update(
             status="Completed",
@@ -306,6 +312,7 @@ def _execute_prediction(
     experimental_results: list,
     canonicalize_substrates: bool = True,
     include_similarity_columns: bool = True,
+    disable_gpu_precompute: bool = False,
 ) -> None:
     """
     Run a single-target prediction and write output.csv.
@@ -356,6 +363,7 @@ def _execute_prediction(
             public_id=job.public_id,
             target=target,
             canonicalize_substrates=canonicalize_substrates,
+            disable_gpu_precompute=disable_gpu_precompute,
             **call_kwargs,
         )
         for global_i, pred in zip(valid_idx, pred_subset):
@@ -408,6 +416,7 @@ def _execute_both_prediction(
     experimental_results: list,
     canonicalize_substrates: bool = True,
     include_similarity_columns: bool = True,
+    disable_gpu_precompute: bool = False,
 ) -> None:
     """
     Run kcat and KM predictions in sequence and write a combined output.csv.
@@ -458,6 +467,7 @@ def _execute_both_prediction(
             public_id=job.public_id,
             target="kcat",
             canonicalize_substrates=canonicalize_substrates,
+            disable_gpu_precompute=disable_gpu_precompute,
             **kcat_call_kwargs,
         )
         for global_i, pred in zip(valid_idx, kcat_subset):
@@ -481,6 +491,7 @@ def _execute_both_prediction(
             public_id=job.public_id,
             target="Km",
             canonicalize_substrates=canonicalize_substrates,
+            disable_gpu_precompute=disable_gpu_precompute,
             **km_call_kwargs,
         )
         for global_i, pred in zip(valid_idx, km_subset):
@@ -564,6 +575,7 @@ def _execute_multi_prediction(
     experimental_results: dict[str, list],
     canonicalize_substrates: bool = True,
     include_similarity_columns: bool = True,
+    disable_gpu_precompute: bool = False,
 ) -> None:
     """
     Run one or more prediction targets and write a combined output.csv.
@@ -634,6 +646,7 @@ def _execute_multi_prediction(
                 public_id=job.public_id,
                 target=target,
                 canonicalize_substrates=canonicalize_substrates,
+                disable_gpu_precompute=disable_gpu_precompute,
                 **call_kwargs,
             )
         except Exception as exc:
@@ -738,6 +751,7 @@ def _invoke_method_prediction(
     public_id: str,
     target: str,
     canonicalize_substrates: bool = True,
+    disable_gpu_precompute: bool = False,
     **call_kwargs,
 ) -> tuple[list, dict[int, str]]:
     """
@@ -751,6 +765,7 @@ def _invoke_method_prediction(
     """
     call_kwargs = dict(call_kwargs)
     call_kwargs.setdefault("canonicalize_substrates", canonicalize_substrates)
+    call_kwargs.setdefault("disable_gpu_precompute", disable_gpu_precompute)
 
     if desc.pred_func is not None:
         preds, invalid_result = desc.pred_func(

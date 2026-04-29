@@ -29,6 +29,27 @@ from api.services import gpu_embed_service as ges  # noqa: E402
 
 
 class GpuEmbedServiceTests(unittest.TestCase):
+    def test_disabled_by_request_skips_planning_even_in_strict_mode(self):
+        with patch.dict("os.environ", {"GPU_EMBED_FAIL_CLOSED": "1"}):
+            with patch.object(ges, "build_embedding_plan") as build_plan:
+                with patch.object(ges, "_base_url") as base_url:
+                    result = ges.run_gpu_precompute_if_available(
+                        job_public_id="job_cpu",
+                        method_key="OmniESI",
+                        target="kcat",
+                        valid_sequences=["AAAA"],
+                        env={},
+                        disabled=True,
+                    )
+
+        self.assertFalse(result.attempted)
+        self.assertFalse(result.used_gpu)
+        self.assertFalse(result.completed)
+        self.assertFalse(result.failed)
+        self.assertEqual(result.reason, "disabled_by_request")
+        build_plan.assert_not_called()
+        base_url.assert_not_called()
+
     def test_gpu_submit_sparse_steps_and_tracker_order(self):
         initial_plan = SimpleNamespace(
             need_computation=2,

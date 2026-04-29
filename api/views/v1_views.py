@@ -251,6 +251,7 @@ def api_submit_job(request):
          useExperimental       (optional, default "false")   — "true" or "false"
          includeSimilarityColumns (optional, default "true") — "true" or "false"
          canonicalizeSubstrates (optional, default "true")  — "true" or "false"
+         disableGpuPrecompute (optional, default "false")   — internal benchmark toggle
 
     2. application/json — send data directly as a JSON body:
          {
@@ -260,6 +261,7 @@ def api_submit_job(request):
            "useExperimental": false,
            "includeSimilarityColumns": true,
            "canonicalizeSubstrates": true,
+           "disableGpuPrecompute": false,
            "data": [
              {"Protein Sequence": "MKTL...", "Substrate": "CC(=O)O"},
              ...
@@ -341,6 +343,10 @@ def _parse_multipart_body(request):
         "canonicalize_substrates": coerce_bool_param(
             request.POST.get("canonicalizeSubstrates"),
             default=True,
+        ),
+        "disable_gpu_precompute": coerce_bool_param(
+            request.POST.get("disableGpuPrecompute"),
+            default=False,
         ),
     }
 
@@ -436,6 +442,10 @@ def _parse_json_body(request):
         "canonicalize_substrates": coerce_bool_param(
             body.get("canonicalizeSubstrates"),
             default=True,
+        ),
+        "disable_gpu_precompute": coerce_bool_param(
+            body.get("disableGpuPrecompute"),
+            default=False,
         ),
     }
 

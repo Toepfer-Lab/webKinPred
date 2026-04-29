@@ -102,6 +102,7 @@ def turnup_predictions(
     valid_prod_values: list[str] = []
     valid_sequences: list[str] = []
     predictions: list = [None] * len(sequences)
+    disable_gpu_precompute = bool(kwargs.get("disable_gpu_precompute", False))
 
     # ── Validate inputs reaction by reaction ──────────────────────────────────
     for idx, (seq, sub_str, prod_str) in enumerate(zip(sequences, substrates, products)):
@@ -166,6 +167,7 @@ def turnup_predictions(
         target="kcat",
         valid_sequences=valid_sequences,
         env=env,
+        disabled=disable_gpu_precompute,
     )
     if _gpu.attempted and not _gpu.completed:
         _log.warning(

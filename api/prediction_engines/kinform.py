@@ -131,6 +131,7 @@ def kinform_predictions(
     valid_smiles: list[str] = []
     valid_sequences: list[str] = []
     predictions: list = [None] * len(sequences)
+    disable_gpu_precompute = bool(kwargs.get("disable_gpu_precompute", False))
 
     # ── Validate inputs molecule by molecule ──────────────────────────────────
     for idx, (seq, substrate) in enumerate(zip(sequences, substrates)):
@@ -188,6 +189,7 @@ def kinform_predictions(
         target=stage_target,
         valid_sequences=valid_sequences,
         env=env,
+        disabled=disable_gpu_precompute,
     )
     if _gpu.attempted and not _gpu.completed:
         _log.warning(
