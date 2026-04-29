@@ -11,36 +11,11 @@ Input JSON:
 Output JSON:
     {"predictions": [12.5, null, 0.045, ...], "invalid_indices": [1, ...]}
 
-Contact-map cache
------------------
-MMISA-KM does not use a PLM, so it does not interact with the shared
-media/sequence_info/ embedding cache.  It has its own contact-map cache
-for protein graph construction.
-
-The cache directory is injected by the platform via:
-    MMISA_KM_CACHE_DIR  — writable directory for runtime contact maps
-                          (set by data_path_env in SubprocessEngineConfig,
-                           resolving DATA_PATHS["MMISA-KM"] in config files)
-
-An optional read-only precomputed map directory can be provided by a
-second env var:
-    MMISA_KM_PRECOMPUTED_DIR  — pre-built contact maps shipped with weights
-                                (also from data_path_env / config_docker.py)
-
-Both are set from config, not probed from MMISA_KM_ROOT, so they resolve
-correctly inside Docker regardless of working directory.
-
 Environment variables (all optional — fallbacks are safe for local dev):
-    MMISA_KM_CACHE_DIR          Writable contact-map cache (platform-injected).
-                                Default: <repo>/cache/mmisa_km
-    MMISA_KM_PRECOMPUTED_DIR    Read-only precomputed contact maps (platform-injected).
-                                Default: none
-    MMISA_KM_ROOT               OmniESI-style root override; used only to
-                                locate trained_model.pt when MMISA_KM_ROOT is
-                                set directly (local dev shortcut).
+    MMISA_KM_ROOT               Root override; used only to locate trained_model.pt
+                                (local dev shortcut).
     MMISA_KM_CONTACT_MAP_SOURCE Contact-map source: sequential|esmfold|alphafold|template
                                 Default: sequential
-    MMISA_KM_NO_CACHE           Set to "1" to disable contact-map caching.
     CUDA_VISIBLE_DEVICES        Standard mechanism to select a specific GPU.
 """
 
@@ -53,7 +28,7 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -135,66 +110,6 @@ MODEL_CONFIG: dict[str, Any] = {
 MAX_SMILES_LEN = 100
 MAX_SEQ_LEN    = 500
 
-# ============================================================================
-# Environment-variable driven configuration
-#
-# Both cache directories are now resolved from explicitly named env vars that
-# the platform sets via data_path_env in SubprocessEngineConfig.  This avoids
-# the previous pattern of probing relative to MMISA_KM_ROOT, which could
-# silently miss inside Docker.
-# ============================================================================
-
-def _resolve_cache_dirs() -> tuple[Path, Path | None]:
-    """
-    Return (runtime_cache_dir, precomputed_dir).
-
-    runtime_cache_dir  — writable directory for contact maps computed at
-                         inference time.  Platform sets this via
-                         MMISA_KM_CACHE_DIR (from DATA_PATHS["MMISA-KM"]).
-
-    precomputed_dir    — optional read-only directory of pre-computed maps
-                         shipped with model weights.  Platform sets this via
-                         MMISA_KM_PRECOMPUTED_DIR (from a second DATA_PATHS
-                         entry or a subdirectory of the weights dir).
-                         None when not configured.
-    """
-    # Primary: explicit platform-injected env vars (config_docker.py / config_local.py)
-    cache_root     = os.getenv("MMISA_KM_CACHE_DIR")
-    precomputed_ev = os.getenv("MMISA_KM_PRECOMPUTED_DIR")
-
-    if cache_root:
-        runtime_cache_dir = Path(cache_root).resolve()
-    else:
-        # Local dev fallback: resolve relative to the repository root.
-        mmisa_root = os.getenv("MMISA_KM_ROOT")
-        if mmisa_root:
-            runtime_cache_dir = Path(mmisa_root).resolve() / "contact_maps" / "cache"
-        else:
-            runtime_cache_dir = _THIS_DIR.parents[4] / "cache" / "mmisa_km"
-
-    runtime_cache_dir.mkdir(parents=True, exist_ok=True)
-
-    precomputed_dir: Path | None = None
-    if precomputed_ev:
-        candidate = Path(precomputed_ev).resolve()
-        if candidate.exists():
-            precomputed_dir = candidate
-        else:
-            logger.warning(
-                "MMISA_KM_PRECOMPUTED_DIR=%r does not exist — skipping precomputed maps",
-                precomputed_ev,
-            )
-    else:
-        # Local dev fallback: probe relative to MMISA_KM_ROOT only
-        mmisa_root = os.getenv("MMISA_KM_ROOT")
-        if mmisa_root:
-            candidate = Path(mmisa_root).resolve() / "contact_maps" / "precomputed"
-            if candidate.exists():
-                precomputed_dir = candidate
-
-    return runtime_cache_dir, precomputed_dir
-
-
 def _resolve_weights_path() -> Path:
     """Locate trained_model.pt via env var or relative-to-script fallback."""
     mmisa_root = os.getenv("MMISA_KM_ROOT")
@@ -207,10 +122,6 @@ def _resolve_weights_path() -> Path:
 
 def _contact_map_source() -> str:
     return os.getenv("MMISA_KM_CONTACT_MAP_SOURCE", "sequential")
-
-
-def _use_cache() -> bool:
-    return os.getenv("MMISA_KM_NO_CACHE", "0") != "1"
 
 
 # ============================================================================
@@ -305,9 +216,6 @@ def _build_mol_graph(smiles: str) -> Data | None:
 def _build_pro_graph(
     sequence: str,
     contact_map_source: str = "sequential",
-    cache: bool = True,
-    cache_dir: Optional[Path] = None,
-    precomputed_dir: Optional[Path] = None,
 ) -> Data:
     seq = sequence[:MAX_SEQ_LEN].upper()
 
@@ -327,9 +235,6 @@ def _build_pro_graph(
     contacts = generate_contact_map(
         sequence=seq,
         structure_source=contact_map_source,
-        cache=cache,
-        cache_dir=cache_dir,
-        precomputed_dir=precomputed_dir,
     )
 
     n = min(len(features), contacts.shape[0])
@@ -386,15 +291,8 @@ def _predict_rows(rows: list[dict[str, Any]]) -> tuple[list[Any], list[int]]:
             progress_emitted = done
             print(f"Progress: {done}/{n_total}", flush=True)
 
-    # Resolve both cache directories once per batch from explicit env vars.
-    cache_dir, precomputed_dir = _resolve_cache_dirs()
     cmap_source = _contact_map_source()
-    use_cache   = _use_cache()
-
-    logger.info(
-        "MMISA-KM contact-map cache: runtime=%s, precomputed=%s, source=%s",
-        cache_dir, precomputed_dir, cmap_source,
-    )
+    logger.info("MMISA-KM contact-map source: %s", cmap_source)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     logger.info("MMISA-KM inference device: %s", device)
@@ -434,9 +332,6 @@ def _predict_rows(rows: list[dict[str, Any]]) -> tuple[list[Any], list[int]]:
             pro_graph = _build_pro_graph(
                 sequence,
                 contact_map_source=cmap_source,
-                cache=use_cache,
-                cache_dir=cache_dir,
-                precomputed_dir=precomputed_dir,
             )
 
             smi_t = torch.tensor(smi_enc[np.newaxis], dtype=torch.long, device=device)
