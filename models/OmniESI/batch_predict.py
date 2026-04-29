@@ -167,6 +167,10 @@ DELETE_EMBEDDINGS_AFTER_RUN = (
     str(os.environ.get("OMNIESI_DELETE_EMBEDDINGS_AFTER_RUN", "1")).strip().lower()
     in {"1", "true", "yes", "on"}
 )
+SHOW_TQDM = (
+    str(os.environ.get("OMNIESI_SHOW_TQDM", "0")).strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 
 # ============================================================================
 # Constants
@@ -521,6 +525,9 @@ def predict_kinetic_parameter_ensemble(
         global_done = progress_base + local_row_done
         if global_done > progress_done:
             progress_done = global_done
+            if SHOW_TQDM:
+                sys.stderr.write("\n")
+                sys.stderr.flush()
             print(f"Progress: {global_done}/{n_total_rows}", flush=True)
 
     # ── Load all checkpoints once upfront ────────────────────────────────────
@@ -543,7 +550,13 @@ def predict_kinetic_parameter_ensemble(
     # ── Row-outer, seed-inner inference ──────────────────────────────────────
     ensemble_predictions: list[float | None] = []
 
-    rows_iter = tqdm(valid_df.iterrows(), total=n_rows, desc="OmniESI", file=sys.stderr)
+    rows_iter = tqdm(
+        valid_df.iterrows(),
+        total=n_rows,
+        desc="OmniESI",
+        file=sys.stderr,
+        disable=not SHOW_TQDM,
+    )
     with torch.no_grad():
         for local_idx, (_, row) in enumerate(rows_iter):
             # Build inputs once per row (embedding is shared across seeds)
