@@ -215,6 +215,24 @@ def _embed_cache_path(seq_id: str) -> Path:
     return OMNIESI_EMBED_CACHE_DIR / f"{seq_id}.pt"
 
 
+def _torch_load_compat(path: str | Path, *, map_location: Any) -> Any:
+    """
+    Load a torch artifact across both newer and older torch versions.
+
+    Newer torch accepts weights_only=True; older torch/pickle stacks may raise
+    either TypeError or an Unpickler keyword error. Fall back to the legacy
+    torch.load signature in those compatibility cases only.
+    """
+    try:
+        return torch.load(str(path), map_location=map_location, weights_only=True)
+    except TypeError:
+        return torch.load(str(path), map_location=map_location)
+    except Exception as exc:
+        if "weights_only" in str(exc):
+            return torch.load(str(path), map_location=map_location)
+        raise
+
+
 def _load_shared_embedding(seq_id: str | None) -> torch.Tensor | None:
     """
     Load a cached per-residue ESM2 embedding by seq_id.
@@ -228,7 +246,7 @@ def _load_shared_embedding(seq_id: str | None) -> torch.Tensor | None:
     if not cache_path.exists():
         return None
     try:
-        tensor = torch.load(cache_path, map_location="cpu", weights_only=True)
+        tensor = _torch_load_compat(cache_path, map_location="cpu")
         # Normalise: stored shape may be [1, seq_len, 1280] (from ESM batch dim)
         # or [seq_len, 1280].  OmniESI prepare_inputs expects [1, seq_len, 1280].
         if tensor.dim() == 2:
@@ -514,10 +532,7 @@ def predict_kinetic_parameter_ensemble(
     for seed in available_seeds:
         m = OmniESI(**cfg)
         weight_path = weight_folder / f"OmniESI_ensemble_{seed}" / "best_model_epoch.pth"
-        try:
-            state = torch.load(str(weight_path), map_location=device, weights_only=True)
-        except TypeError:
-            state = torch.load(str(weight_path), map_location=device)
+        state = _torch_load_compat(weight_path, map_location=device)
         m.load_state_dict(state)
         m.to(device)
         m.eval()
@@ -549,10 +564,14 @@ def predict_kinetic_parameter_ensemble(
             v_p      = v_p.to(device)
             v_d_mask = v_d_mask.to(device)
             v_p_mask = v_p_mask.to(device)
+            node_h   = v_d.ndata["h"].clone()
 
             log_values: list[float] = []
             for seed_idx, m in enumerate(loaded_models):
                 try:
+                    # Encoder_drug pops ndata["h"], so restore it before each
+                    # ensemble checkpoint reuses the same molecular graph.
+                    v_d.ndata["h"] = node_h.clone()
                     output = m(v_d, v_p, v_d_mask, v_p_mask)
                     log_values.append(float(output[-1].cpu().numpy().flatten()[0]))
                 except Exception as exc:
