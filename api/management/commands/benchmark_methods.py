@@ -4,10 +4,12 @@ Benchmark inference latency for all production API methods.
 For each method, this command can run up to three benchmark modes:
 1) uncached CPU baseline (existing path)
 2) uncached GPU precompute path (requires actual GPU execution)
-3) cached repeat (existing path)
+3) cached repeat, for methods with a persistent cache
 
 Each method is benchmarked for exactly one target: kcat if supported, otherwise
 Km. GPU mode is submitted only for method/target pairs with GPU offload support.
+Methods with ephemeral embedding use (currently OmniESI and EITLEM) skip the
+cached repeat because there is no persistent sequence cache to benchmark.
 
 Example summary:
   DLKcat [kcat] - 100.00s compute (not cached cpu), n/a compute (not cached gpu), 10.00s compute (cached)
@@ -70,6 +72,7 @@ GPU_OFFLOAD_METHOD_TARGETS = {
     ("OmniESI", "kcat"),
     ("OmniESI", "Km"),
 }
+NO_PERSISTENT_CACHE_METHOD_IDS = {"OmniESI", "EITLEM"}
 PREFERRED_METHOD_ORDER = [
     "UniKP",
     "TurNup",
@@ -327,11 +330,23 @@ class Command(BaseCommand):
         self.stdout.write(
             "Reporting metric: computeSeconds from /api/v1/status/ (queueSeconds ignored)."
         )
-        projected_jobs_per_method = 1 if gpu_only else 3
+        projected_jobs = 0
+        for method_key in selected_keys:
+            target = method_targets[method_key]
+            if gpu_only:
+                if (method_key, target) in GPU_OFFLOAD_METHOD_TARGETS:
+                    projected_jobs += 1
+                continue
+            projected_jobs += 1  # uncached CPU
+            if (method_key, target) in GPU_OFFLOAD_METHOD_TARGETS:
+                projected_jobs += 1
+            if self._has_persistent_cache(method_key):
+                projected_jobs += 1
+
         self.stdout.write(
             "Projected quota cost (upper bound): "
-            f"{len(selected_keys) * projected_jobs_per_method * num_reactions} rows "
-            f"({projected_jobs_per_method} jobs per method)."
+            f"{projected_jobs * num_reactions} rows "
+            f"({projected_jobs} submitted job(s))."
         )
         self.stdout.write(
             f"Seed: {run_seed} ({'fixed' if options['seed'] is not None else 'auto-generated'})"
@@ -344,7 +359,7 @@ class Command(BaseCommand):
             self.stdout.write(
                 "Uncached CPU run uses fresh proteins per method and submits "
                 "disableGpuPrecompute=true; cached run repeats the same proteins "
-                "for that method with GPU precompute still disabled."
+                "only for methods with a persistent cache."
             )
             self.stdout.write(
                 "Uncached GPU run uses a second fresh protein set per method and "
@@ -501,9 +516,16 @@ class Command(BaseCommand):
         if not gpu_only:
             cached_jobs: dict[str, PendingBenchmarkJob] = {}
             self.stdout.write("")
-            self.stdout.write("Submitting cached repeat jobs after uncached CPU warm-up.")
+            self.stdout.write("Submitting cached repeat jobs where a persistent cache exists.")
             for idx, method_key in enumerate(selected_keys, start=1):
                 self.stdout.write(f"[{idx}/{len(selected_keys)}] {method_key}")
+                if not self._has_persistent_cache(method_key):
+                    raw_results[method_key]["cached"] = self._skipped_run(
+                        "no_persistent_cache_for_method"
+                    )
+                    self.stdout.write("  skipped cached: no persistent cache for method")
+                    continue
+
                 df_cpu = cached_inputs.get(method_key)
                 if df_cpu is None:
                     raw_results[method_key]["cached"] = SingleRunResult(
@@ -614,7 +636,7 @@ class Command(BaseCommand):
                 1
                 for r in results
                 if r.uncached_cpu.status == "Completed"
-                and r.cached.status == "Completed"
+                and r.cached.status in {"Completed", "Skipped"}
                 and r.uncached_gpu.status in {"Completed", "Skipped"}
             )
         self.stdout.write("-" * 72)
@@ -772,6 +794,9 @@ class Command(BaseCommand):
             gpu_completed=None,
             gpu_reason=None,
         )
+
+    def _has_persistent_cache(self, method_key: str) -> bool:
+        return method_key not in NO_PERSISTENT_CACHE_METHOD_IDS
 
     def _submit_single_benchmark(
         self,
@@ -1211,6 +1236,8 @@ class Command(BaseCommand):
         if not gpu_only and cached.status not in {"Completed", "Skipped"}:
             msg = cached.error_message or "Unknown failure"
             details.append(f"cached failed: {msg}")
+        elif not gpu_only and cached.status == "Skipped":
+            details.append(f"cached skipped: {cached.error_message}")
 
         if uncached_gpu.status == "Skipped":
             details.append(f"uncached gpu skipped: {uncached_gpu.error_message}")
