@@ -1,13 +1,16 @@
 """
-Benchmark kcat inference latency for all production API kcat-capable methods.
+Benchmark inference latency for all production API methods.
 
 For each method, this command can run up to three benchmark modes:
 1) uncached CPU baseline (existing path)
 2) uncached GPU precompute path (requires actual GPU execution)
 3) cached repeat (existing path)
 
+Each method is benchmarked for exactly one target: kcat if supported, otherwise
+Km. GPU mode is submitted only for method/target pairs with GPU offload support.
+
 Example summary:
-  DLKcat - 100.00s compute (not cached cpu), n/a compute (not cached gpu), 10.00s compute (cached)
+  DLKcat [kcat] - 100.00s compute (not cached cpu), n/a compute (not cached gpu), 10.00s compute (cached)
 
 The command submits jobs to the public REST API (/api/v1/submit/) and polls
 /api/v1/status/<job_id>/, reporting only server-side compute time
@@ -50,16 +53,34 @@ PRODUCT_POOL = [
     "CC(=O)N",  # acetamide
 ]
 DEFAULT_API_BASE_URL = "https://predictor.openkinetics.org/api/v1"
-GPU_OFFLOAD_KCAT_METHOD_IDS = {"KinForm-H", "KinForm-L", "UniKP", "TurNup", "CataPro", "EITLEM", "CatPred"}
+GPU_OFFLOAD_METHOD_TARGETS = {
+    ("KinForm-H", "kcat"),
+    ("KinForm-H", "Km"),
+    ("KinForm-L", "kcat"),
+    ("KinForm-L", "Km"),
+    ("UniKP", "kcat"),
+    ("UniKP", "Km"),
+    ("TurNup", "kcat"),
+    ("CataPro", "kcat"),
+    ("CataPro", "Km"),
+    ("EITLEM", "kcat"),
+    ("EITLEM", "Km"),
+    ("CatPred", "kcat"),
+    ("CatPred", "Km"),
+    ("OmniESI", "kcat"),
+    ("OmniESI", "Km"),
+}
 PREFERRED_METHOD_ORDER = [
     "UniKP",
     "TurNup",
     "EITLEM",
     "CataPro",
     "CatPred",
+    "OmniESI",
     "KinForm-L",
     "KinForm-H",
     "DLKcat",
+    "MMISA-KM",
 ]
 METHOD_KEY_ALIASES = {
     "eitlem": "EITLEM",
@@ -71,6 +92,8 @@ METHOD_KEY_ALIASES = {
     "turnup": "TurNup",
     "catapro": "CataPro",
     "catpred": "CatPred",
+    "omniesi": "OmniESI",
+    "mmisakm": "MMISA-KM",
     "dlkcat": "DLKcat",
 }
 
@@ -90,6 +113,7 @@ class SingleRunResult:
 @dataclass
 class MethodBenchmarkResult:
     method_key: str
+    target: str
     uncached_cpu: SingleRunResult
     uncached_gpu: SingleRunResult
     cached: SingleRunResult
@@ -98,15 +122,17 @@ class MethodBenchmarkResult:
 @dataclass
 class PendingBenchmarkJob:
     method_key: str
+    target: str
     run_key: str
     public_id: str
     require_gpu: bool
+    require_no_gpu: bool = False
 
 
 class Command(BaseCommand):
     help = (
-        "Benchmark kcat inference time for each registered kcat-capable method, "
-        "running uncached cpu, uncached gpu, and cached modes."
+        "Benchmark inference time for each registered method, using kcat when "
+        "available and otherwise Km, with uncached cpu, uncached gpu, and cached modes."
     )
 
     def add_arguments(self, parser):
@@ -254,7 +280,7 @@ class Command(BaseCommand):
                 "Accept": "application/json",
             }
         )
-        kcat_methods = self._fetch_kcat_methods(
+        method_targets = self._fetch_method_targets(
             session=session,
             api_base_url=api_base_url,
             request_timeout_seconds=request_timeout_seconds,
@@ -266,7 +292,7 @@ class Command(BaseCommand):
             for requested_key in methods_filter:
                 resolved_key = self._resolve_method_key(
                     token=requested_key,
-                    available_methods=kcat_methods,
+                    available_methods=list(method_targets),
                 )
                 if resolved_key is None:
                     unknown.append(requested_key)
@@ -276,18 +302,21 @@ class Command(BaseCommand):
 
             if unknown:
                 raise CommandError(
-                    "Unknown or non-kcat method key(s) for this API: " + ", ".join(sorted(unknown))
+                    "Unknown method key(s) for this API: " + ", ".join(sorted(unknown))
                 )
             selected_keys = self._order_method_keys(selected_keys)
         else:
-            selected_keys = self._order_method_keys(kcat_methods)
+            selected_keys = self._order_method_keys(list(method_targets))
 
         run_seed = options["seed"]
         if run_seed is None:
             run_seed = secrets.randbits(64)
 
         self.stdout.write(
-            f"Benchmarking {len(selected_keys)} kcat method(s): {', '.join(selected_keys)}"
+            f"Benchmarking {len(selected_keys)} method(s): "
+            + ", ".join(
+                f"{method_key}[{method_targets[method_key]}]" for method_key in selected_keys
+            )
         )
         self.stdout.write(
             "Synthetic workload: "
@@ -313,8 +342,9 @@ class Command(BaseCommand):
             )
         else:
             self.stdout.write(
-                "Uncached CPU run uses fresh proteins per method; cached run repeats "
-                "the same proteins for that method."
+                "Uncached CPU run uses fresh proteins per method and submits "
+                "disableGpuPrecompute=true; cached run repeats the same proteins "
+                "for that method with GPU precompute still disabled."
             )
             self.stdout.write(
                 "Uncached GPU run uses a second fresh protein set per method and "
@@ -340,6 +370,7 @@ class Command(BaseCommand):
 
         for idx, method_key in enumerate(selected_keys, start=1):
             self.stdout.write(f"[{idx}/{len(selected_keys)}] {method_key}")
+            target = method_targets[method_key]
             method_seed = self._derive_method_seed(run_seed, method_key)
             rng_cpu = random.Random(method_seed)
             rng_gpu = random.Random(method_seed ^ 0x9E3779B97F4A7C15)
@@ -371,8 +402,10 @@ class Command(BaseCommand):
                     session=session,
                     api_base_url=api_base_url,
                     method_key=method_key,
+                    target=target,
                     input_df=df_cpu,
                     handle_long_sequences=handle_long_sequences,
+                    disable_gpu_precompute=True,
                     request_timeout_seconds=request_timeout_seconds,
                 )
                 if uncached_cpu_submission is None:
@@ -391,15 +424,17 @@ class Command(BaseCommand):
                 else:
                     stage1_jobs[uncached_cpu_submission] = PendingBenchmarkJob(
                         method_key=method_key,
+                        target=target,
                         run_key="uncached_cpu",
                         public_id=uncached_cpu_submission,
                         require_gpu=False,
+                        require_no_gpu=True,
                     )
                     self.stdout.write(f"  submitted uncached cpu: {uncached_cpu_submission}")
 
-            if method_key not in GPU_OFFLOAD_KCAT_METHOD_IDS:
+            if (method_key, target) not in GPU_OFFLOAD_METHOD_TARGETS:
                 raw_results[method_key]["uncached_gpu"] = self._skipped_run(
-                    "gpu_offload_not_supported_for_method"
+                    "gpu_offload_not_supported_for_method_target"
                 )
             else:
                 proteins_gpu = self._generate_unique_proteins(
@@ -418,8 +453,10 @@ class Command(BaseCommand):
                     session=session,
                     api_base_url=api_base_url,
                     method_key=method_key,
+                    target=target,
                     input_df=df_gpu,
                     handle_long_sequences=handle_long_sequences,
+                    disable_gpu_precompute=False,
                     request_timeout_seconds=request_timeout_seconds,
                 )
                 if uncached_gpu_submission is None:
@@ -438,6 +475,7 @@ class Command(BaseCommand):
                 else:
                     stage1_jobs[uncached_gpu_submission] = PendingBenchmarkJob(
                         method_key=method_key,
+                        target=target,
                         run_key="uncached_gpu",
                         public_id=uncached_gpu_submission,
                         require_gpu=True,
@@ -484,8 +522,10 @@ class Command(BaseCommand):
                     session=session,
                     api_base_url=api_base_url,
                     method_key=method_key,
+                    target=method_targets[method_key],
                     input_df=df_cpu,
                     handle_long_sequences=handle_long_sequences,
+                    disable_gpu_precompute=True,
                     request_timeout_seconds=request_timeout_seconds,
                 )
                 if cached_submission is None:
@@ -504,9 +544,11 @@ class Command(BaseCommand):
                 else:
                     cached_jobs[cached_submission] = PendingBenchmarkJob(
                         method_key=method_key,
+                        target=method_targets[method_key],
                         run_key="cached",
                         public_id=cached_submission,
                         require_gpu=False,
+                        require_no_gpu=True,
                     )
                     self.stdout.write(f"  submitted cached: {cached_submission}")
 
@@ -549,6 +591,7 @@ class Command(BaseCommand):
             )
             method_result = MethodBenchmarkResult(
                 method_key=method_key,
+                target=method_targets[method_key],
                 uncached_cpu=uncached_cpu_result,
                 uncached_gpu=uncached_gpu_result,
                 cached=cached_result,
@@ -736,16 +779,19 @@ class Command(BaseCommand):
         session: requests.Session,
         api_base_url: str,
         method_key: str,
+        target: str,
         input_df: pd.DataFrame,
         handle_long_sequences: str,
+        disable_gpu_precompute: bool,
         request_timeout_seconds: float,
     ) -> str | SingleRunResult | None:
         payload = {
-            "targets": ["kcat"],
-            "methods": {"kcat": method_key},
+            "targets": [target],
+            "methods": {target: method_key},
             "handleLongSequences": handle_long_sequences,
             "useExperimental": False,
             "canonicalizeSubstrates": True,
+            "disableGpuPrecompute": disable_gpu_precompute,
             "data": input_df.to_dict(orient="records"),
             "includeSimilarityColumns": False,
         }
@@ -824,6 +870,7 @@ class Command(BaseCommand):
                     public_id=public_id,
                     request_timeout_seconds=request_timeout_seconds,
                     require_gpu=job.require_gpu,
+                    require_no_gpu=job.require_no_gpu,
                 )
                 if maybe_result is None:
                     continue
@@ -848,6 +895,7 @@ class Command(BaseCommand):
         public_id: str,
         request_timeout_seconds: float,
         require_gpu: bool,
+        require_no_gpu: bool = False,
     ) -> SingleRunResult | None:
         status_url = f"{api_base_url}/status/{public_id}/"
         try:
@@ -945,6 +993,20 @@ class Command(BaseCommand):
                 )
         if require_gpu and status == "Failed" and not error_message:
             result.error_message = "Prediction failed during required GPU run."
+        if require_no_gpu and status == "Completed" and gpu_used is True:
+            return SingleRunResult(
+                compute_seconds=compute_seconds,
+                status="Failed",
+                error_message=(
+                    "CPU run completed but reported usedGpu=true "
+                    f"(gpu_reason={gpu_reason!r})."
+                ),
+                public_id=public_id,
+                gpu_used=gpu_used,
+                gpu_attempted=gpu_attempted,
+                gpu_completed=gpu_completed,
+                gpu_reason=gpu_reason,
+            )
         return result
 
     def _poll_job_until_terminal(
@@ -957,6 +1019,7 @@ class Command(BaseCommand):
         timeout_seconds: int,
         request_timeout_seconds: float,
         require_gpu: bool,
+        require_no_gpu: bool = False,
     ) -> SingleRunResult:
         del timeout_seconds
         while True:
@@ -966,6 +1029,7 @@ class Command(BaseCommand):
                 public_id=public_id,
                 request_timeout_seconds=request_timeout_seconds,
                 require_gpu=require_gpu,
+                require_no_gpu=require_no_gpu,
             )
             if maybe_result is not None:
                 return maybe_result
@@ -1011,19 +1075,23 @@ class Command(BaseCommand):
         session: requests.Session,
         api_base_url: str,
         method_key: str,
+        target: str,
         input_df: pd.DataFrame,
         handle_long_sequences: str,
         poll_seconds: float,
         timeout_seconds: int,
         request_timeout_seconds: float,
         require_gpu: bool,
+        require_no_gpu: bool = False,
     ) -> SingleRunResult:
         submission = self._submit_single_benchmark(
             session=session,
             api_base_url=api_base_url,
             method_key=method_key,
+            target=target,
             input_df=input_df,
             handle_long_sequences=handle_long_sequences,
+            disable_gpu_precompute=require_no_gpu,
             request_timeout_seconds=request_timeout_seconds,
         )
         if submission is None:
@@ -1043,15 +1111,16 @@ class Command(BaseCommand):
             timeout_seconds=timeout_seconds,
             request_timeout_seconds=request_timeout_seconds,
             require_gpu=require_gpu,
+            require_no_gpu=require_no_gpu,
         )
 
-    def _fetch_kcat_methods(
+    def _fetch_method_targets(
         self,
         *,
         session: requests.Session,
         api_base_url: str,
         request_timeout_seconds: float,
-    ) -> list[str]:
+    ) -> dict[str, str]:
         methods_url = f"{api_base_url}/methods/"
         try:
             response = session.get(methods_url, timeout=request_timeout_seconds)
@@ -1069,19 +1138,28 @@ class Command(BaseCommand):
         except ValueError as exc:
             raise CommandError(f"/methods response was not valid JSON: {exc}")
 
-        kcat_entries = data.get("methods", {}).get("kcat", [])
-        method_ids = sorted(
-            {
-                str(entry.get("id")).strip()
-                for entry in kcat_entries
-                if isinstance(entry, dict) and str(entry.get("id", "")).strip()
-            }
-        )
-        if not method_ids:
+        methods_by_target = data.get("methods", {})
+        if not isinstance(methods_by_target, dict):
+            raise CommandError("/methods response did not include a methods object.")
+
+        selected: dict[str, str] = {}
+        for target in ("kcat", "Km"):
+            entries = methods_by_target.get(target, [])
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                method_id = str(entry.get("id", "")).strip()
+                if not method_id:
+                    continue
+                selected.setdefault(method_id, target)
+
+        if not selected:
             raise CommandError(
-                "No kcat-capable methods were returned by the API /methods endpoint."
+                "No kcat- or Km-capable methods were returned by the API /methods endpoint."
             )
-        return method_ids
+        return selected
 
     def _extract_error_message(self, response: requests.Response) -> str:
         try:
@@ -1115,12 +1193,12 @@ class Command(BaseCommand):
 
         if gpu_only:
             base = (
-                f"{result.method_key} - "
+                f"{result.method_key} [{result.target}] - "
                 f"{uncached_gpu_time} compute (not cached gpu)"
             )
         else:
             base = (
-                f"{result.method_key} - "
+                f"{result.method_key} [{result.target}] - "
                 f"{uncached_cpu_time} compute (not cached cpu), "
                 f"{uncached_gpu_time} compute (not cached gpu), "
                 f"{cached_time} compute (cached)"
