@@ -92,7 +92,16 @@ def kinform_predictions(
     assert model_variant in {"H", "L"}, "model_variant must be 'H' or 'L'"
     model_key = f"KinForm-{model_variant}"
     stage_target = "kcat" if kinetics_type.upper() == "KCAT" else "Km"
-    print(f"Running {model_key} model (kinetics_type={kinetics_type})...")
+    _log.info(
+        "Prediction method started",
+        extra={
+            "event": "prediction.method_started",
+            "job_public_id": public_id,
+            "method_key": model_key,
+            "target": stage_target,
+            "kinetics_type": kinetics_type,
+        },
+    )
 
     job = Job.objects.get(public_id=public_id)
     reset_stage_prediction_metrics(
@@ -154,7 +163,17 @@ def kinform_predictions(
                 if not seq_valid
                 else "Invalid substrate (not a valid SMILES or InChI)"
             )
-            print(f"  Row {idx + 1}: {reason}")
+            _log.debug(
+                "Prediction row invalid",
+                extra={
+                    "event": "prediction.row_invalid",
+                    "job_public_id": public_id,
+                    "method_key": model_key,
+                    "target": stage_target,
+                    "row_index": idx,
+                    "reason": reason,
+                },
+            )
             invalid_reasons[idx] = reason
             increment_stage_validation(
                 job_public_id=public_id,

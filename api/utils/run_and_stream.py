@@ -1,16 +1,19 @@
-import subprocess
+import logging
 import os
-from api.utils.similarity_config import TARGET_DBS
+import subprocess
+
 from api.services.progress_service import (
-    push_line,
-    is_cancelled,
     get_pid_key,
+    is_cancelled,
+    push_line,
     redis_conn,
 )
 from api.utils.log_sanitiser import sanitise_log_line
+from api.utils.similarity_config import TARGET_DBS
 
 TMP_DIR = os.environ.get("MMSEQS_TMP_DIR", "/tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
+_log = logging.getLogger(__name__)
 
 
 def run_and_stream(
@@ -48,11 +51,21 @@ def run_and_stream(
         rc = proc.wait()
     finally:
         if proc:
-            print(f"[cleanup] Deleting PID key for session {session_id}")
+            _log.debug(
+                "Deleting progress session PID key",
+                extra={
+                    "event": "progress_stream.pid_key_deleted",
+                    "session_id": session_id,
+                    "pid": proc.pid,
+                },
+            )
             redis_conn.delete(pid_key)
 
     if is_cancelled(session_id):
-        print(f"[run_and_stream] Step for session {session_id} was cancelled.")
+        _log.info(
+            "Progress stream command cancelled",
+            extra={"event": "progress_stream.command_cancelled", "session_id": session_id},
+        )
         return
     if rc is None:
         raise RuntimeError("Command did not produce an exit code.")

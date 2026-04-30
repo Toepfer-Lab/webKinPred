@@ -74,7 +74,15 @@ def turnup_predictions(
     PredictionError
         On subprocess failure or any unrecoverable error.
     """
-    print("Running TurNup model...")
+    _log.info(
+        "Prediction method started",
+        extra={
+            "event": "prediction.method_started",
+            "job_public_id": public_id,
+            "method_key": "TurNup",
+            "target": "kcat",
+        },
+    )
 
     job = Job.objects.get(public_id=public_id)
     reset_stage_prediction_metrics(
@@ -123,7 +131,17 @@ def turnup_predictions(
             reason = ""
 
         if reason:
-            print(f"  Row {idx + 1}: {reason}")
+            _log.debug(
+                "Prediction row invalid",
+                extra={
+                    "event": "prediction.row_invalid",
+                    "job_public_id": public_id,
+                    "method_key": "TurNup",
+                    "target": "kcat",
+                    "row_index": idx,
+                    "reason": reason,
+                },
+            )
             invalid_reasons[idx] = reason
             increment_stage_validation(
                 job_public_id=public_id,

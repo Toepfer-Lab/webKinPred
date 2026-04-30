@@ -5,8 +5,12 @@
 # All prediction engines use this helper so that progress reporting and OOM
 # detection are handled consistently in one place.
 
+import logging
+import os
 import re
 import subprocess
+import time
+
 from api.models import Job
 from api.services.embedding_progress_service import (
     start_embedding_tracking,
@@ -16,6 +20,11 @@ from api.services.job_progress_service import set_stage_prediction_progress
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _RATIO_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+_WARNING_LINE_RE = re.compile(r"(error|exception|traceback|fatal|failed|warning|warn)", re.I)
+_NOISY_LINE_RE = re.compile(
+    r"(MoleculeModel\\(|^\\s*\\(|^\\s*\\)|^\\s*\\w+\\(|\\d+%\\||\\d+/\\d+\\s*\\[|^\\s*$)"
+)
+_log = logging.getLogger(__name__)
 
 
 def _strip_ansi(text: str) -> str:
@@ -155,13 +164,92 @@ def run_prediction_subprocess(
     process = None
     last_done_reported = -1
     last_total_reported: int | None = None
+    output_lines = 0
+    suppressed_lines = 0
+    progress_events = 0
+    last_progress_bucket = -1
+    started_at = time.monotonic()
     catpred_estimator = (
         _CatPredProgressEstimator(expected_predictions=len(valid_sequences or []))
         if str(label).strip().lower() == "catpred"
         else None
     )
 
-    def _report_prediction_progress(done_i: int, total_i: int | None = None) -> None:
+    def _command_summary() -> dict[str, str | int | None]:
+        return {
+            "executable": os.path.basename(command[0]) if command else None,
+            "script": os.path.basename(command[1]) if len(command) > 1 else None,
+            "arg_count": len(command),
+        }
+
+    def _base_extra() -> dict[str, object]:
+        return {
+            "job_public_id": job.public_id,
+            "method_key": method_key or label,
+            "target": target,
+            "subprocess_label": label,
+            "source": "method_subprocess",
+        }
+
+    def _log_progress(done_i: int, total_i: int | None, *, estimated: bool = False) -> None:
+        nonlocal progress_events, last_progress_bucket
+        progress_events += 1
+        if total_i is None or total_i <= 0:
+            return
+
+        bucket = int((done_i / total_i) * 10) if total_i else 0
+        should_log = total_i <= 10 or done_i in {0, 1, total_i} or bucket > last_progress_bucket
+        if not should_log:
+            return
+
+        last_progress_bucket = max(last_progress_bucket, bucket)
+        _log.info(
+            "Subprocess prediction progress",
+            extra={
+                "event": "subprocess.progress",
+                **_base_extra(),
+                "progress_done": done_i,
+                "progress_total": total_i,
+                "progress_percent": round((done_i / total_i) * 100, 2),
+                "estimated": estimated,
+            },
+        )
+
+    def _log_output_line(line: str) -> None:
+        nonlocal suppressed_lines
+        clean_line = _strip_ansi(line).strip()
+        if _WARNING_LINE_RE.search(clean_line):
+            _log.warning(
+                "Subprocess emitted warning/error output",
+                extra={
+                    "event": "subprocess.stderr_line",
+                    **_base_extra(),
+                    "line": clean_line[:2000],
+                    "stream": "stdout_stderr",
+                },
+            )
+            return
+
+        if str(label).strip().lower() == "catpred" or _NOISY_LINE_RE.search(clean_line):
+            suppressed_lines += 1
+            return
+
+        _log.debug(
+            "Subprocess output",
+            extra={
+                "event": "subprocess.output",
+                **_base_extra(),
+                "line": clean_line[:2000],
+                "stream": "stdout_stderr",
+            },
+        )
+
+    def _report_prediction_progress(
+        done_i: int,
+        total_i: int | None = None,
+        *,
+        estimated: bool = False,
+    ) -> None:
         nonlocal last_done_reported, last_total_reported
 
         done_i = max(0, int(done_i))
@@ -195,8 +283,18 @@ def run_prediction_subprocess(
         last_done_reported = done_i
         if total_i is not None:
             last_total_reported = total_i
+        _log_progress(done_i, total_i, estimated=estimated)
 
     try:
+        _log.info(
+            "Starting prediction subprocess",
+            extra={
+                "event": "subprocess.started",
+                **_base_extra(),
+                **_command_summary(),
+                "valid_sequence_count": len(valid_sequences or []),
+            },
+        )
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -212,7 +310,7 @@ def run_prediction_subprocess(
                     break
 
                 line = line.rstrip()
-                print(f"[{label}]", line)
+                output_lines += 1
 
                 if line.startswith("Progress:"):
                     parts = line.split()
@@ -221,7 +319,14 @@ def run_prediction_subprocess(
                             done, total = parts[1].split("/")
                             _report_prediction_progress(int(done), int(total))
                         except (ValueError, AttributeError):
-                            pass  # malformed progress line — ignore
+                            _log.debug(
+                                "Ignoring malformed subprocess progress line",
+                                extra={
+                                    "event": "subprocess.progress_malformed",
+                                    **_base_extra(),
+                                    "line": _strip_ansi(line)[:2000],
+                                },
+                            )
                     continue
 
                 # CatPred prints tqdm bars instead of "Progress: x/y" during inference.
@@ -233,12 +338,40 @@ def run_prediction_subprocess(
                         _report_prediction_progress(
                             estimated_done,
                             catpred_estimator.expected_predictions,
+                            estimated=True,
                         )
+                        continue
+
+                _log_output_line(line)
 
         process.wait()
 
         if process.returncode != 0:
+            _log.error(
+                "Prediction subprocess failed",
+                extra={
+                    "event": "subprocess.failed",
+                    **_base_extra(),
+                    "return_code": process.returncode,
+                    "duration_ms": int((time.monotonic() - started_at) * 1000),
+                    "output_lines": output_lines,
+                    "suppressed_lines": suppressed_lines,
+                    "progress_events": progress_events,
+                },
+            )
             raise subprocess.CalledProcessError(process.returncode, process.args)
+        _log.info(
+            "Prediction subprocess completed",
+            extra={
+                "event": "subprocess.completed",
+                **_base_extra(),
+                "return_code": process.returncode,
+                "duration_ms": int((time.monotonic() - started_at) * 1000),
+                "output_lines": output_lines,
+                "suppressed_lines": suppressed_lines,
+                "progress_events": progress_events,
+            },
+        )
     finally:
         if tracking_started:
             final_state = "done" if (process is not None and process.returncode == 0) else "error"

@@ -60,6 +60,7 @@ services:
       - ./fastas/dbs:/app/fastas/dbs:ro
     environment:
       <<: *common-env
+      WEBKINPRED_SERVICE: backend
     depends_on:
       redis:
         condition: service_healthy
@@ -68,7 +69,7 @@ services:
       sh -c "python manage.py migrate &&
              python manage.py migrate --database=seqmap &&
              python manage.py collectstatic --noinput --clear &&
-             gunicorn webKinPred.wsgi:application --bind 0.0.0.0:8000 --workers 2 --worker-class sync --timeout 300 --graceful-timeout 30 --access-logfile - --error-logfile - --capture-output"
+             gunicorn webKinPred.wsgi:application --bind 0.0.0.0:8000 --workers 2 --worker-class sync --timeout 300 --graceful-timeout 30 --access-logfile /dev/null --error-logfile - --capture-output"
 
   # ── Frontend (nginx + React SPA) ────────────────────────────────────────────
   frontend:
@@ -107,6 +108,7 @@ services:
       - ./models/CatPred:/app/models/CatPred:ro
     environment:
       <<: *common-env
+      WEBKINPRED_SERVICE: celery
     depends_on:
       redis:
         condition: service_healthy
@@ -137,6 +139,7 @@ services:
       - ./media/sequence_info/seqmap.sqlite3:/app/media/sequence_info/seqmap.sqlite3
     environment:
       <<: *common-env
+      WEBKINPRED_SERVICE: celery-beat
     depends_on:
       redis:
         condition: service_healthy
@@ -151,5 +154,45 @@ services:
       start_period: 30s
     command: celery -A webKinPred beat --loglevel=info
 
+  # ── Observability (Loki + Promtail + Grafana) ───────────────────────────────
+  loki:
+    image: grafana/loki:2.9.8
+    command: -config.file=/etc/loki/config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./monitoring/promtail/config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
 volumes:
   redis_data:
+  loki_data:
+  grafana_data:

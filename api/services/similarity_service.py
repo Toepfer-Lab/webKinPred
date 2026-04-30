@@ -2,29 +2,32 @@
 Similarity analysis service that orchestrates the similarity workflow.
 """
 
-import tempfile
+import logging
 import os
 import subprocess
-from typing import List, Dict, Any, Optional
+import tempfile
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from api.utils.similarity_utils import (
-    TMP_DIR,
-    _mmseqs_cmd,
-    extract_protein_sequences_from_csv,
-    create_unique_sequence_mapping,
-    create_fasta_file,
-    create_mmseqs_database,
-    run_mmseqs_search,
-    parse_mmseqs_results,
-    map_results_to_original_sequences,
-    calculate_identity_histogram,
-    calculate_average_similarity,
-    cleanup_temporary_files,
-)
 from api.services.progress_service import push_line
 from api.utils.similarity_config import SIMILARITY_DATASETS, TARGET_DBS
+from api.utils.similarity_utils import (
+    TMP_DIR,
+    calculate_average_similarity,
+    calculate_identity_histogram,
+    cleanup_temporary_files,
+    create_fasta_file,
+    create_mmseqs_database,
+    create_unique_sequence_mapping,
+    extract_protein_sequences_from_csv,
+    map_results_to_original_sequences,
+    parse_mmseqs_results,
+    run_mmseqs_search,
+    _mmseqs_cmd,
+)
+
+_log = logging.getLogger(__name__)
 
 
 def analyze_sequence_similarity(csv_file, session_id: str = "default") -> Dict[str, Any]:
@@ -212,9 +215,14 @@ def _write_blank_similarity_columns(
     try:
         df = pd.read_csv(output_csv_path)
     except Exception as exc:
-        print(
-            f"[WARN] Could not read output CSV to add blank similarity columns: {exc}",
-            flush=True,
+        _log.warning(
+            "Could not read output CSV to add blank similarity columns",
+            extra={
+                "event": "similarity.output_blank_columns_read_failed",
+                "output_csv_path": output_csv_path,
+                "exception_type": type(exc).__name__,
+            },
+            exc_info=True,
         )
         return
 
@@ -223,9 +231,14 @@ def _write_blank_similarity_columns(
     try:
         df.to_csv(output_csv_path, index=False)
     except Exception as exc:
-        print(
-            f"[WARN] Could not write blank similarity columns to output CSV: {exc}",
-            flush=True,
+        _log.warning(
+            "Could not write blank similarity columns to output CSV",
+            extra={
+                "event": "similarity.output_blank_columns_write_failed",
+                "output_csv_path": output_csv_path,
+                "exception_type": type(exc).__name__,
+            },
+            exc_info=True,
         )
 
 
@@ -342,10 +355,15 @@ def append_kcat_similarity_columns_to_output_csv(
         df.to_csv(output_csv_path, index=False)
 
     except Exception as exc:
-        print(
-            f"[WARN] Could not enrich output CSV with kcat similarity columns for "
-            f"method '{kcat_method_key}': {exc}",
-            flush=True,
+        _log.warning(
+            "Could not enrich output CSV with kcat similarity columns",
+            extra={
+                "event": "similarity.output_enrichment_failed",
+                "output_csv_path": output_csv_path,
+                "method_key": kcat_method_key,
+                "exception_type": type(exc).__name__,
+            },
+            exc_info=True,
         )
         _write_blank_similarity_columns(output_csv_path, mean_col, max_col)
     finally:

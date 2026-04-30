@@ -1,14 +1,16 @@
-import redis
-import time
+import logging
 import os
 import signal
+import time
 from typing import Any
 
+import redis
 from django.conf import settings
 
 redis_conn: Any = redis.from_url(settings.LOGGING_REDIS_URL, decode_responses=True)
 
 _LOG_TTL = 3600  # seconds — list persists for 1 h after session ends
+_log = logging.getLogger(__name__)
 
 
 def get_channel_name(session_id: str) -> str:
@@ -50,14 +52,35 @@ def cancel_session(session_id: str):
     pid_key = get_pid_key(session_id)
     pid_to_kill = redis_conn.get(pid_key)
     if pid_to_kill:
-        print(
-            f"[cancel_session] Found PID {pid_to_kill} for session {session_id}. Attempting to terminate."
+        _log.info(
+            "Cancelling progress session process",
+            extra={
+                "event": "progress_session.cancel_process",
+                "session_id": session_id,
+                "pid": pid_to_kill,
+            },
         )
         try:
             os.killpg(int(pid_to_kill), signal.SIGTERM)
-            print(f"[cancel_session] Successfully sent SIGTERM to PID {pid_to_kill}.")
+            _log.info(
+                "Sent SIGTERM to progress session process",
+                extra={
+                    "event": "progress_session.sigterm_sent",
+                    "session_id": session_id,
+                    "pid": pid_to_kill,
+                },
+            )
         except (ProcessLookupError, ValueError, PermissionError) as e:
-            print(f"[cancel_session] Could not kill PID {pid_to_kill}: {e}")
+            _log.warning(
+                "Could not terminate progress session process",
+                extra={
+                    "event": "progress_session.sigterm_failed",
+                    "session_id": session_id,
+                    "pid": pid_to_kill,
+                    "exception_type": type(e).__name__,
+                },
+                exc_info=True,
+            )
 
     redis_conn.set(get_cancel_key(session_id), "1", ex=600)
     push_line(session_id, "[CANCEL] Job cancelled by user. Process terminated.")
@@ -87,7 +110,10 @@ def sse_generator(session_id: str, keepalive_secs: int = 15):
     pubsub = redis_conn.pubsub()
     pubsub.subscribe(channel)
 
-    print(f"[sse_generator] Subscribed to {channel}")
+    _log.info(
+        "Subscribed to progress stream",
+        extra={"event": "progress_stream.subscribed", "session_id": session_id, "channel": channel},
+    )
     yield "data: --- Streaming logs ---\n\n"
 
     cursor = 0  # next index to read from the Redis list
@@ -105,7 +131,14 @@ def sse_generator(session_id: str, keepalive_secs: int = 15):
             yield f"{formatted}\n\n"
 
         if finished:
-            print(f"[sse_generator] __FINISHED__ for {channel}. Closing stream.")
+            _log.info(
+                "Progress stream finished",
+                extra={
+                    "event": "progress_stream.finished",
+                    "session_id": session_id,
+                    "channel": channel,
+                },
+            )
             # Named 'done' event tells the client to close the EventSource
             # immediately, preventing auto-reconnect loops.
             yield "event: done\ndata: finished\n\n"

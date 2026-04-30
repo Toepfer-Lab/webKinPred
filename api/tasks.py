@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import pandas as pd
@@ -32,6 +33,7 @@ from django.utils import timezone
 from api.methods.base import PredictionError
 from api.methods.registry import get as get_method
 from api.models import Job
+from api.observability.context import log_context
 from api.prediction_engines.generic_subprocess import run_generic_subprocess_prediction
 from api.services.gpu_precompute_status_service import clear_gpu_precompute_status
 from api.services.job_progress_service import (
@@ -53,6 +55,8 @@ try:
     from webKinPred.config_docker import SERVER_LIMIT
 except ImportError:
     from webKinPred.config_local import SERVER_LIMIT
+
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +386,16 @@ def _execute_prediction(
             continue
         idx = exp["idx"]
         if exp.get("protein_sequence") != sequences[idx]:
-            print(f"  Protein sequence mismatch at index {idx}, skipping experimental overwrite.")
+            _log.warning(
+                "Skipping experimental overwrite because protein sequence mismatched",
+                extra={
+                    "event": "prediction.experimental_overwrite_mismatch",
+                    "job_public_id": job.public_id,
+                    "method_key": desc.key,
+                    "target": target,
+                    "row_index": idx,
+                },
+            )
             continue
         prev = full_preds[idx]
         full_preds[idx] = exp[exp_key]
@@ -512,7 +525,16 @@ def _execute_both_prediction(
             continue
         idx = exp["idx"]
         if exp.get("protein_sequence") != sequences[idx]:
-            print(f"  Protein sequence mismatch at index {idx}, skipping experimental overwrite.")
+            _log.warning(
+                "Skipping experimental overwrite because protein sequence mismatched",
+                extra={
+                    "event": "prediction.experimental_overwrite_mismatch",
+                    "job_public_id": job.public_id,
+                    "method_key": f"{kcat_desc.key}/{km_desc.key}",
+                    "target": "kcat/Km",
+                    "row_index": idx,
+                },
+            )
             continue
         if "kcat_value" in exp:
             prev = kcat_preds[idx]
@@ -673,8 +695,15 @@ def _execute_multi_prediction(
                 continue
 
             if exp.get("protein_sequence") != sequences[idx]:
-                print(
-                    f"  Protein sequence mismatch at index {idx}, skipping experimental overwrite."
+                _log.warning(
+                    "Skipping experimental overwrite because protein sequence mismatched",
+                    extra={
+                        "event": "prediction.experimental_overwrite_mismatch",
+                        "job_public_id": job.public_id,
+                        "method_key": target_results[target]["desc"].key,
+                        "target": target,
+                        "row_index": idx,
+                    },
                 )
                 continue
 
@@ -767,24 +796,25 @@ def _invoke_method_prediction(
     call_kwargs.setdefault("canonicalize_substrates", canonicalize_substrates)
     call_kwargs.setdefault("disable_gpu_precompute", disable_gpu_precompute)
 
-    if desc.pred_func is not None:
-        preds, invalid_result = desc.pred_func(
-            sequences=sequences,
-            public_id=public_id,
-            **call_kwargs,
-        )
-        if isinstance(invalid_result, dict):
-            return preds, invalid_result
-        return preds, {idx: "Prediction could not be made" for idx in (invalid_result or [])}
+    with log_context(job_public_id=public_id, method_key=desc.key, target=target):
+        if desc.pred_func is not None:
+            preds, invalid_result = desc.pred_func(
+                sequences=sequences,
+                public_id=public_id,
+                **call_kwargs,
+            )
+            if isinstance(invalid_result, dict):
+                return preds, invalid_result
+            return preds, {idx: "Prediction could not be made" for idx in (invalid_result or [])}
 
-    if desc.subprocess is not None:
-        return run_generic_subprocess_prediction(
-            desc=desc,
-            sequences=sequences,
-            public_id=public_id,
-            target=target,
-            **call_kwargs,
-        )
+        if desc.subprocess is not None:
+            return run_generic_subprocess_prediction(
+                desc=desc,
+                sequences=sequences,
+                public_id=public_id,
+                target=target,
+                **call_kwargs,
+            )
 
     raise PredictionError(f"{desc.display_name} is not configured with a prediction engine.")
 

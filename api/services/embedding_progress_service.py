@@ -14,6 +14,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import json
+import logging
 import os
 import select
 import struct
@@ -44,6 +45,7 @@ _REDIS_WRITE_MIN_INTERVAL_SECS = 0.25
 
 _TRACKERS: dict[str, "_EmbeddingTracker"] = {}
 _TRACKERS_LOCK = threading.Lock()
+_log = logging.getLogger(__name__)
 
 
 def _redis_key(job_public_id: str) -> str:
@@ -198,7 +200,17 @@ def start_embedding_tracking(
             env=env or {},
         )
     except Exception as exc:  # fail-open: prediction must continue
-        print(f"[embedding_progress] setup skipped for {job_public_id}/{method_key}: {exc}")
+        _log.warning(
+            "Embedding progress setup skipped",
+            extra={
+                "event": "embedding_progress.setup_skipped",
+                "job_public_id": job_public_id,
+                "method_key": method_key,
+                "target": target,
+                "exception_type": type(exc).__name__,
+            },
+            exc_info=True,
+        )
         clear_embedding_progress(job_public_id)
         _sync_stage_embedding_state(
             job_public_id=job_public_id,
@@ -460,9 +472,16 @@ class _EmbeddingTracker:
             redis_conn.set(_redis_key(self.job_public_id), json.dumps(payload), ex=_TTL_SECONDS)
         except Exception as exc:
             # Progress is telemetry. Redis outages must not abort prediction.
-            print(
-                f"[embedding_progress] redis write skipped for "
-                f"{self.job_public_id}/{self.method_key}: {exc}"
+            _log.warning(
+                "Embedding progress Redis write skipped",
+                extra={
+                    "event": "embedding_progress.redis_write_skipped",
+                    "job_public_id": self.job_public_id,
+                    "method_key": self.method_key,
+                    "target": self.target,
+                    "exception_type": type(exc).__name__,
+                },
+                exc_info=True,
             )
         _sync_stage_embedding_progress(
             job_public_id=self.job_public_id,
@@ -552,7 +571,16 @@ class _EmbeddingTracker:
                 for watch_dir in self._watch_dirs:
                     _add_watch_if_exists(inotify_fd, watch_dir, wd_to_dir)
         except Exception as exc:
-            print(f"[embedding_progress] inotify disabled: {exc}")
+            _log.info(
+                "Embedding progress inotify disabled",
+                extra={
+                    "event": "embedding_progress.inotify_disabled",
+                    "job_public_id": self.job_public_id,
+                    "method_key": self.method_key,
+                    "target": self.target,
+                    "exception_type": type(exc).__name__,
+                },
+            )
             use_inotify = False
             inotify_fd = None
 

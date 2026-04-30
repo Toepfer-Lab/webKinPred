@@ -7,4 +7,5 @@ class ApiConfig(AppConfig):
 
     def ready(self):
         # Import tasks to ensure Celery registers them
-        import api.tasks
+        import api.tasks  # noqa: F401
+        import api.observability.celery_signals  # noqa: F401

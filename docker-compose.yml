@@ -31,6 +31,7 @@ services:
       - DEBUG=1
       - DJANGO_SETTINGS_MODULE=webKinPred.settings_docker
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY must be set}
+      - WEBKINPRED_SERVICE=backend
       - REDIS_URL=redis://redis:6379/0
       - MMSEQS_TMP_DIR=/app/mmseqs_tmp
       - GPU_EMBED_SERVICE_URL=${GPU_EMBED_SERVICE_URL:-}
@@ -39,7 +40,7 @@ services:
       - GPU_EMBED_JOB_TIMEOUT_SECONDS=${GPU_EMBED_JOB_TIMEOUT_SECONDS:-1200}
       - GPU_EMBED_FAIL_CLOSED=${GPU_EMBED_FAIL_CLOSED:-0}
       
-    command: gunicorn webKinPred.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120
+    command: gunicorn webKinPred.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120 --access-logfile /dev/null
     depends_on:
       redis:
         condition: service_healthy
@@ -96,6 +97,7 @@ services:
       - DEBUG=1
       - DJANGO_SETTINGS_MODULE=webKinPred.settings_docker
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY must be set}
+      - WEBKINPRED_SERVICE=celery
       - REDIS_URL=redis://redis:6379/0
       - GPU_EMBED_SERVICE_URL=${GPU_EMBED_SERVICE_URL:-}
       - GPU_EMBED_SERVICE_TOKEN=${GPU_EMBED_SERVICE_TOKEN:-}
@@ -136,6 +138,7 @@ services:
       - DEBUG=1
       - DJANGO_SETTINGS_MODULE=webKinPred.settings_docker
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY must be set}
+      - WEBKINPRED_SERVICE=celery-beat
       - REDIS_URL=redis://redis:6379/0
       - GPU_EMBED_SERVICE_URL=${GPU_EMBED_SERVICE_URL:-}
       - GPU_EMBED_SERVICE_TOKEN=${GPU_EMBED_SERVICE_TOKEN:-}

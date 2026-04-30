@@ -114,6 +114,12 @@ Rules:
 - Use `null` for missing predictions.
 - If your script uses PyTorch, handle both GPU and CPU runtimes:
   use CUDA only when `torch.cuda.is_available()` is `True`, and keep a CPU fallback.
+- Emit prediction progress as `Progress: x/y` on stdout if the script can report it.
+  The platform parses those lines for frontend progress and separately writes
+  structured infrastructure logs.
+- Do not add bare `print()` calls in `api/` runtime code. Use Python logging with
+  a stable `event` key in `extra`, and keep user-facing validation/session text
+  on `push_line()`.
 
 Path config example:
 

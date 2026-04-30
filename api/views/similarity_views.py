@@ -1,5 +1,8 @@
+import logging
+
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+
 from api.services.progress_service import push_line, finish_session
 from api.services.similarity_service import analyze_sequence_similarity
 from api.utils.http_utils import (
@@ -8,11 +11,16 @@ from api.utils.http_utils import (
     extract_validation_session_id,
 )
 
+_log = logging.getLogger(__name__)
+
 
 @csrf_exempt
 def sequence_similarity_summary(request):
     """Analyze protein sequence similarity against target databases."""
-    print("[INFO] sequence_similarity_summary called", flush=True)
+    _log.info(
+        "Sequence similarity summary requested",
+        extra={"event": "similarity.summary_requested"},
+    )
 
     # Validate request method
     method_error = validate_post_request_similarity(request)
@@ -38,12 +46,26 @@ def sequence_similarity_summary(request):
         return JsonResponse(result, status=200)
 
     except ValueError as ve:
-        print(f"[ERROR] Validation error in sequence_similarity_summary: {ve}", flush=True)
+        _log.warning(
+            "Sequence similarity validation failed",
+            extra={
+                "event": "similarity.validation_failed",
+                "session_id": session_id,
+                "exception_type": type(ve).__name__,
+            },
+        )
         push_line(session_id, f"[VALIDATION ERROR] {ve}")
         return JsonResponse({"error": str(ve)}, status=400)
 
     except Exception as e:
-        print(f"[ERROR] Exception in sequence_similarity_summary: {e}", flush=True)
+        _log.exception(
+            "Sequence similarity failed",
+            extra={
+                "event": "similarity.failed",
+                "session_id": session_id,
+                "exception_type": type(e).__name__,
+            },
+        )
         push_line(session_id, f"[EXCEPTION] {e}")
         return JsonResponse({"error": str(e)}, status=500)
 

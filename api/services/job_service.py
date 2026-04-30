@@ -2,6 +2,7 @@
 Job service that orchestrates job submission and management workflows.
 """
 
+import logging
 from typing import Any, Dict, Optional, Tuple
 
 from django.http import JsonResponse
@@ -29,6 +30,8 @@ from api.utils.validation_utils import (
     parse_csv_file,
     validate_column_emptiness,
 )
+
+_log = logging.getLogger(__name__)
 
 
 def process_job_submission(
@@ -137,7 +140,15 @@ def process_job_submission_from_params(
     try:
         user = get_or_create_user(ip_address)
     except Exception as e:
-        print(f"Warning: could not create/update ApiUser for {ip_address}: {e}")
+        _log.warning(
+            "Could not create or update ApiUser",
+            extra={
+                "event": "job.api_user_sync_failed",
+                "ip_address": ip_address,
+                "exception_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
         user = None
 
     experimental_results = get_experimental_results(
@@ -220,7 +231,18 @@ def create_job_record(params: Dict[str, Any], ip_address: str, requested_rows: i
         user=user,
     )
     job.save()
-    print("Saved Job:", job.public_id)
+    _log.info(
+        "Job record created",
+        extra={
+            "event": "job.created",
+            "job_public_id": job.public_id,
+            "prediction_type": job.prediction_type,
+            "requested_rows": requested_rows,
+            "kcat_method": job.kcat_method,
+            "km_method": job.km_method,
+            "kcat_km_method": job.kcat_km_method,
+        },
+    )
     return job
 
 
@@ -245,14 +267,7 @@ def dispatch_prediction_task(
     include_similarity_columns = params.get("include_similarity_columns", True)
     disable_gpu_precompute = params.get("disable_gpu_precompute", False)
 
-    print(
-        "Dispatching multi-target task: "
-        f"targets={targets}, methods={methods}, "
-        f"canonicalize_substrates={canonicalize_substrates}, "
-        f"include_similarity_columns={include_similarity_columns}, "
-        f"disable_gpu_precompute={disable_gpu_precompute}"
-    )
-    run_multi_prediction.delay(
+    result = run_multi_prediction.delay(
         public_id,
         targets,
         methods,
@@ -260,6 +275,19 @@ def dispatch_prediction_task(
         canonicalize_substrates,
         include_similarity_columns,
         disable_gpu_precompute,
+    )
+    _log.info(
+        "Prediction task dispatched",
+        extra={
+            "event": "job.task_dispatched",
+            "job_public_id": public_id,
+            "celery_task_id": result.id,
+            "targets": targets,
+            "methods": methods,
+            "canonicalize_substrates": canonicalize_substrates,
+            "include_similarity_columns": include_similarity_columns,
+            "disable_gpu_precompute": disable_gpu_precompute,
+        },
     )
 
 

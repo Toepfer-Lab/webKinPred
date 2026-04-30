@@ -46,6 +46,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "api.observability.middleware.RequestIDMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -187,6 +188,8 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TASK_SEND_SENT_EVENT = True
 CELERY_TASK_TRACK_STARTED = True
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+CELERY_WORKER_REDIRECT_STDOUTS = False
 
 # Cache settings
 CACHES = {
@@ -201,3 +204,84 @@ CACHES = {
 }
 
 LOGGING_REDIS_URL = f"redis://{redis_host}:{redis_port}/2"
+
+
+def _log_level(name: str, default: str) -> str:
+    return os.environ.get(name, default).upper()
+
+
+LOG_LEVEL = _log_level("LOG_LEVEL", "INFO")
+DJANGO_LOG_LEVEL = _log_level("DJANGO_LOG_LEVEL", LOG_LEVEL)
+CELERY_LOG_LEVEL = _log_level("CELERY_LOG_LEVEL", LOG_LEVEL)
+SUBPROCESS_LOG_LEVEL = _log_level("SUBPROCESS_LOG_LEVEL", LOG_LEVEL)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "correlation": {
+            "()": "api.observability.formatters.CorrelationFilter",
+        },
+    },
+    "formatters": {
+        "json": {
+            "()": "api.observability.formatters.JsonLogFormatter",
+            "format": "%(timestamp)s %(level)s %(logger)s %(message)s %(service)s "
+            "%(request_id)s %(job_public_id)s %(celery_task_id)s %(method_key)s %(target)s "
+            "%(event)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "filters": ["correlation"],
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": LOG_LEVEL,
+    },
+    "loggers": {
+        "api": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "api.prediction_engines.subprocess_runner": {
+            "handlers": ["console"],
+            "level": SUBPROCESS_LOG_LEVEL,
+            "propagate": False,
+        },
+        "celery": {
+            "handlers": ["console"],
+            "level": CELERY_LOG_LEVEL,
+            "propagate": False,
+        },
+        "django": {
+            "handlers": ["console"],
+            "level": DJANGO_LOG_LEVEL,
+            "propagate": False,
+        },
+        "django.server": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "gunicorn.access": {
+            "handlers": ["console"],
+            "level": os.environ.get("GUNICORN_ACCESS_LOG_LEVEL", "WARNING").upper(),
+            "propagate": False,
+        },
+        "gunicorn.error": {
+            "handlers": ["console"],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "urllib3": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}

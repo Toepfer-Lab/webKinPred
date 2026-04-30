@@ -5,6 +5,7 @@
 # Wraps the DLKcat prediction script in a subprocess call.  Handles molecule
 # validation, progress reporting, and user-friendly error messages.
 
+import logging
 import os
 import subprocess
 
@@ -28,6 +29,7 @@ from api.utils.convert_to_mol import convert_to_mol, substrate_as_smiles
 from webKinPred.settings import MEDIA_ROOT
 
 _AMINO_ACIDS = set("ACDEFGHIKLMNPQRSTVWY")
+_log = logging.getLogger(__name__)
 
 
 def dlkcat_predictions(
@@ -62,7 +64,15 @@ def dlkcat_predictions(
     PredictionError
         On subprocess failure or any unrecoverable error.
     """
-    print("Running DLKcat model...")
+    _log.info(
+        "Prediction method started",
+        extra={
+            "event": "prediction.method_started",
+            "job_public_id": public_id,
+            "method_key": "DLKcat",
+            "target": "kcat",
+        },
+    )
 
     job = Job.objects.get(public_id=public_id)
     reset_stage_prediction_metrics(
@@ -126,7 +136,17 @@ def dlkcat_predictions(
                 )
                 continue
 
-        print(f"  Row {idx + 1}: {reason}")
+        _log.debug(
+            "Prediction row invalid",
+            extra={
+                "event": "prediction.row_invalid",
+                "job_public_id": public_id,
+                "method_key": "DLKcat",
+                "target": "kcat",
+                "row_index": idx,
+                "reason": reason,
+            },
+        )
         invalid_reasons[idx] = reason
         increment_stage_validation(
             job_public_id=public_id,
