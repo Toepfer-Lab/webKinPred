@@ -22,7 +22,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _RATIO_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 _WARNING_LINE_RE = re.compile(r"(error|exception|traceback|fatal|failed|warning|warn)", re.I)
 _NOISY_LINE_RE = re.compile(
-    r"(MoleculeModel\\(|^\\s*\\(|^\\s*\\)|^\\s*\\w+\\(|\\d+%\\||\\d+/\\d+\\s*\\[|^\\s*$)"
+    r"(MoleculeModel\(|^\s*\(|^\s*\)|^\s*\w+\(|\d+%\||\d+/\d+\s*\[|^\s*$)"
 )
 _log = logging.getLogger(__name__)
 
