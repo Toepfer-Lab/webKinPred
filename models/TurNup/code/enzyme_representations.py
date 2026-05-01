@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pickle
+from argparse import Namespace
+
 import numpy as np
 import pandas as pd
 import torch
@@ -47,9 +50,25 @@ def _torch_load_compat(path, map_location=None):
     """Prefer weights-only loading when supported; keep legacy fallback."""
     try:
         return torch.load(path, map_location=map_location, weights_only=True)
-    except (TypeError, RuntimeError):
-        # torch<2.0 or checkpoints that require legacy loader
+    except TypeError:
+        # torch<2.0 does not support weights_only.
         return torch.load(path, map_location=map_location)
+    except (RuntimeError, pickle.UnpicklingError):
+        # Some trusted upstream ESM checkpoints include argparse.Namespace
+        # metadata. Keep weights-only mode where PyTorch supports allowlisting.
+        add_safe_globals = getattr(torch.serialization, "add_safe_globals", None)
+        if add_safe_globals is not None:
+            try:
+                add_safe_globals([Namespace])
+                return torch.load(path, map_location=map_location, weights_only=True)
+            except (RuntimeError, pickle.UnpicklingError):
+                pass
+
+        # Final fallback for bundled/trusted TurNup model artifacts.
+        try:
+            return torch.load(path, map_location=map_location, weights_only=False)
+        except TypeError:
+            return torch.load(path, map_location=map_location)
 
 
 def resolve_seq_ids_via_cli(sequences):
