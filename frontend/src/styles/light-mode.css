@@ -1040,17 +1040,26 @@
   color: #1c1443;
 }
 
+[data-theme="light"] .about-metrics-section {
+  --about-metric-bg: rgba(255, 255, 255, 0.94);
+  --about-metric-border: rgba(90, 108, 160, 0.18);
+  --about-metric-border-hover: rgba(75, 96, 156, 0.3);
+  --about-metric-value: #1f2a4a;
+  --about-metric-label: rgba(58, 73, 118, 0.78);
+  --about-metric-shadow: 0 1px 2px rgba(30, 41, 75, 0.07);
+}
+
 [data-theme="light"] .about-metric-card {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(110, 90, 200, 0.14);
+  background: var(--about-metric-bg);
+  border-color: var(--about-metric-border);
 }
 
 [data-theme="light"] .about-metric-value {
-  color: #24195a;
+  color: var(--about-metric-value);
 }
 
 [data-theme="light"] .about-metric-label {
-  color: rgba(70, 56, 128, 0.82);
+  color: var(--about-metric-label);
 }
 
 [data-theme="light"] .about-institution-card {
