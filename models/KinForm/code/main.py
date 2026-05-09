@@ -432,8 +432,8 @@ def predict(task: str, cfg_name: str, model_dir: Path, csv_out: Path, data_path:
         print(f"✓ Loaded transformers from {model_dir / 'transformers.joblib'}")
 
     # Keep inference RAM bounded and report progress per completed batch.
-    # With batch_size=32, each progress step corresponds to up to 32 predictions.
-    batch_size = 32
+    # With batch_size=128, each progress step corresponds to up to 128 predictions.
+    batch_size = 128
     total_predictions = len(seqs)
     y_pred_log = []
     for i in range(0, total_predictions, batch_size):
