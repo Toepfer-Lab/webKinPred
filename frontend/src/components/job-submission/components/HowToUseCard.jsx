@@ -11,8 +11,8 @@ const FORMAT_SPECS = [
     name: 'Single-Substrate',
     methods: ['CataPro', 'CatPred (Km)', 'DLKcat', 'EITLEM', 'KinForm-H', 'KinForm-L', 'MMISA-KM', 'OmniESI', 'UniKP'],
     columns: [
-      { col: 'protein_sequence', desc: 'full amino-acid sequence' },
-      { col: 'substrate',        desc: 'SMILES or InChI — one per row' },
+      { col: 'Protein Sequence', desc: 'full amino-acid sequence' },
+      { col: 'Substrate',        desc: 'SMILES or InChI — one per row' },
     ],
   },
   {
@@ -20,8 +20,8 @@ const FORMAT_SPECS = [
     name: 'Multi-Substrate',
     methods: ['CatPred (kcat)'],
     columns: [
-      { col: 'protein_sequence', desc: 'full amino-acid sequence' },
-      { col: 'substrate',        desc: <span>co-substrates joined with <code className="fmt-dot">.</code> <span className="fmt-eg">e.g. CC(=O)O.O</span></span> },
+      { col: 'Protein Sequence', desc: 'full amino-acid sequence' },
+      { col: 'Substrate',        desc: <span>co-substrates joined with <code className="fmt-dot">.</code> <span className="fmt-eg">e.g. CC(=O)O.O</span></span> },
     ],
   },
   {
@@ -29,9 +29,9 @@ const FORMAT_SPECS = [
     name: 'Full Reaction',
     methods: ['TurNup'],
     columns: [
-      { col: 'protein_sequence', desc: 'full amino-acid sequence' },
-      { col: 'substrates',       desc: 'semicolon-separated SMILES or InChI' },
-      { col: 'products',         desc: 'semicolon-separated SMILES or InChI' },
+      { col: 'Protein Sequence', desc: 'full amino-acid sequence' },
+      { col: 'Substrates',       desc: 'semicolon-separated SMILES or InChI' },
+      { col: 'Products',         desc: 'semicolon-separated SMILES or InChI' },
     ],
   },
 ];
