@@ -246,6 +246,12 @@ def run_multi_prediction(
         Optional pre-fetched experimental rows keyed by target.
     """
     job = Job.objects.get(public_id=public_id)
+    if job.status == "Completed":
+        _log.info(
+            "Skipping duplicate task execution — job already completed",
+            extra={"event": "task.duplicate_skipped", "job_public_id": public_id},
+        )
+        return
     _safe_clear_gpu_precompute_status(public_id)
     job.status = "Processing"
     job.start_time = timezone.now()
