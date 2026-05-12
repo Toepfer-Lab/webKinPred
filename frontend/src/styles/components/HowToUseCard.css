@@ -1,5 +1,44 @@
 /* src/components/HowToUseCard.css */
 
+.howto-limit-alert {
+  border: 1px solid rgba(255, 193, 7, 0.45);
+  background: rgba(255, 193, 7, 0.12);
+  color: rgba(255, 236, 179, 0.95);
+  margin-bottom: 0.75rem;
+}
+
+.howto-limit-icon {
+  color: rgba(255, 206, 84, 0.95);
+  flex-shrink: 0;
+}
+
+.howto-limit-link {
+  color: #ffe9a5;
+  font-weight: 700;
+}
+
+.howto-limit-link:hover {
+  color: #fff4c9;
+}
+
+[data-theme="light"] .howto-limit-alert {
+  border-color: rgba(180, 121, 0, 0.35);
+  background: rgba(255, 210, 120, 0.22);
+  color: rgba(99, 58, 0, 0.92);
+}
+
+[data-theme="light"] .howto-limit-icon {
+  color: rgba(148, 92, 0, 0.95);
+}
+
+[data-theme="light"] .howto-limit-link {
+  color: #8b4e00;
+}
+
+[data-theme="light"] .howto-limit-link:hover {
+  color: #6d3d00;
+}
+
 .step-col {
   padding: 1rem;
 }

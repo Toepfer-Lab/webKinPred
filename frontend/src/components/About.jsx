@@ -176,6 +176,16 @@ const About = () => {
           </div>
         </section>
 
+        <section className="about-contact-section">
+          <h4 className="about-citation-heading">Contact</h4>
+          <p className="about-contact-text">
+            Email{' '}
+            <a href="mailto:s.alwer1@universityofgalway.ie" className="about-contact-link">
+              s.alwer1@universityofgalway.ie
+            </a>.
+          </p>
+        </section>
+
         <section style={{ marginBottom: '2rem' }}>
           <h4 className="about-citation-heading">Citation</h4>
           <Form.Group controlId="citationText">

@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { Card, Row, Col, Alert, Button } from 'react-bootstrap';
-import { BoxArrowInDown, Bullseye, CloudUpload, Cpu, Github, ChevronDown, BoxArrowUpRight } from 'react-bootstrap-icons';
+import { BoxArrowInDown, Bullseye, CloudUpload, Cpu, Github, ChevronDown, BoxArrowUpRight, ExclamationTriangle } from 'react-bootstrap-icons';
+import { Link } from 'react-router-dom';
 import '../../../styles/components/HowToUseCard.css';
 
 const FORMAT_SPECS = [
@@ -67,6 +68,13 @@ export default function HowToUseCard({ methods = {} }) {
         <p className="lead text-center mb-4">
           Predict kinetic parameters (k<sub>cat</sub>, K<sub>M</sub>, and k<sub>cat</sub>/K<sub>M</sub>) for enzyme-catalysed reactions using various machine learning models.
         </p>
+        <Alert variant="warning" className="d-flex align-items-center howto-limit-alert">
+          <ExclamationTriangle size={24} className="me-3 howto-limit-icon" />
+          <div>
+            Default usage is limited to <strong>20,000 reactions per day</strong>. If you need a higher limit, please{' '}
+            <Link to="/about" className="howto-limit-link">contact us</Link>.
+          </div>
+        </Alert>
         <Alert variant="info" className="d-flex align-items-center">
           <Bullseye size={24} className="me-3" />
           <div>

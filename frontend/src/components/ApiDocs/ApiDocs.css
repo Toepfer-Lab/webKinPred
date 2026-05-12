@@ -193,6 +193,28 @@
   border-radius: 0.5rem;
 }
 
+.about-contact-section {
+  margin-bottom: 2rem;
+}
+
+.about-contact-text {
+  margin-bottom: 0;
+  font-size: 0.95rem;
+  color: rgba(232, 230, 240, 0.86);
+}
+
+.about-contact-link {
+  color: #d8c8ff;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: rgba(216, 200, 255, 0.45);
+  text-underline-offset: 2px;
+}
+
+.about-contact-link:hover {
+  color: #eadfff;
+}
+
 /* Contribute page link */
 .contribute-link {
   color: rgba(195, 178, 255, 0.88);
