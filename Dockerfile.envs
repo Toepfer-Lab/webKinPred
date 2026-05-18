@@ -109,6 +109,13 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     && conda run -n iecata_env pip install \
         -r docker-requirements/iecata_requirements.txt
 
+FROM base AS env-realkcat
+COPY docker-requirements/realkcat_requirements.txt ./docker-requirements/
+RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
+    --mount=type=cache,id=webkinpred-pip-py312,target=/root/.cache/pip,sharing=locked \
+    mamba create -n realkcat_env python=3.9 -c conda-forge -y \
+    && conda run -n realkcat_env pip install -r docker-requirements/realkcat_requirements.txt
+
 FROM base AS env-pseq2sites
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     --mount=type=cache,id=webkinpred-pip-py37,target=/root/.cache/pip,sharing=locked \
